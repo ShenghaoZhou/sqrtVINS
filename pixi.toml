@@ -1,0 +1,19 @@
+[workspace]
+authors = ["Shenghao <shzhou@udel.edu>"]
+channels = ["conda-forge"]
+name = "sqrtVINS"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+configure="cmake -B build -GNinja -DCMAKE_PREFIX_PATH=$CONDA_PREFIX -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_COLOR_DIAGNOSTICS=ON -DENABLE_ARUCO_TAGS=OFF"
+build="cmake --build build -j"
+
+[dependencies]
+opencv = ">=4.13.0,<5"
+eigen = ">=3.4.0,<4"
+cxx-compiler = ">=1.11.0,<2"
+cmake = ">=4.2.3,<5"
+ninja = ">=1.13.2,<2"
+ccache = ">=4.12.2,<5"
+libboost-devel = ">=1.90.0,<2"

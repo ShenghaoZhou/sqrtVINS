@@ -9,3 +9,6 @@ doxgen_generated
 doc
 .vscode
 __pycache__
+# pixi environments
+.pixi/*
+!.pixi/config.toml

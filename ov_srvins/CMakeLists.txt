@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.3)
+cmake_minimum_required(VERSION 3.5)
 project(ov_srvins)
 
 # Include libraries (if we don't have opencv 4, then fallback to opencv 3)
@@ -10,7 +10,7 @@ if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 REQUIRED)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
+find_package(Boost REQUIRED COMPONENTS filesystem thread date_time)
 message(STATUS "OPENCV: " ${OpenCV_VERSION} " | BOOST: " ${Boost_VERSION})
 
 # If we will compile with aruco support
@@ -56,6 +56,6 @@ elseif(ament_cmake_FOUND)
     message(STATUS "ROS *2* version found, building ROS2.cmake")
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ROS2.cmake)
 else()
-    message(STATUS "No ROS versions found, building ROS1.cmake")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ROS1.cmake)
+    message(STATUS "No ROS versions found, building NO_ROS.cmake")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NO_ROS.cmake)
 endif()

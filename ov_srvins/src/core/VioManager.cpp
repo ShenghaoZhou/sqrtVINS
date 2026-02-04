@@ -12,22 +12,19 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
 
-
-
-
-
 #include "VioManager.h"
+#include <algorithm>
 
 #include "feat/Feature.h"
 #include "feat/FeatureDatabase.h"
@@ -445,171 +442,10 @@ void VioManager::do_feature_propagate_update(
   // Now, lets get all features that should be used for an update that are lost
   // in the newest frame We explicitly request features that have not been
   // deleted (used) in another update step
-  std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_slam;
-  feats_lost =
-      trackFEATS->get_feature_database()->features_not_containing_newer(
-          state->timestamp, false, true);
-
-  // Don't need to get the oldest features until we reach our max number of
-  // clones
-  if ((int)state->clones_IMU.size() == state->options.max_clone_size + 1 ||
-      (int)state->clones_IMU.size() > 5) {
-    feats_marg = trackFEATS->get_feature_database()->features_containing(
-        state->margtimestep(), false, true);
-    if (trackARUCO != nullptr &&
-        message.timestamp - startup_time >= params.dt_slam_delay) {
-      feats_slam = trackARUCO->get_feature_database()->features_containing(
-          state->margtimestep(), false, true);
-    }
-  }
-
-  // Remove any lost features that were from other image streams
-  // E.g: if we are cam1 and cam0 has not processed yet, we don't want to try to
-  // use those in the update yet E.g: thus we wait until cam0 process its newest
-  // image to remove features which were seen from that camera
-  auto it1 = feats_lost.begin();
-  while (it1 != feats_lost.end()) {
-    bool found_current_message_camid = false;
-    for (const auto &camuvpair : (*it1)->uvs) {
-      if (std::find(message.sensor_ids.begin(), message.sensor_ids.end(),
-                    camuvpair.first) != message.sensor_ids.end()) {
-        found_current_message_camid = true;
-        break;
-      }
-    }
-    if (found_current_message_camid) {
-      it1++;
-    } else {
-      it1 = feats_lost.erase(it1);
-    }
-  }
-
-  // We also need to make sure that the max tracks does not contain any lost
-  // features This could happen if the feature was lost in the last frame, but
-  // has a measurement at the marg timestep
-  it1 = feats_lost.begin();
-  while (it1 != feats_lost.end()) {
-    if (std::find(feats_marg.begin(), feats_marg.end(), (*it1)) !=
-        feats_marg.end()) {
-      // PRINT_WARNING(YELLOW "FOUND FEATURE THAT WAS IN BOTH feats_lost and
-      // feats_marg!!!!!!\n" RESET);
-      it1 = feats_lost.erase(it1);
-    } else {
-      it1++;
-    }
-  }
-
-  // Find tracks that have reached max length, these can be made into SLAM
-  // features
-  std::vector<std::shared_ptr<Feature>> feats_maxtracks;
-  auto it2 = feats_marg.begin();
-  while (it2 != feats_marg.end()) {
-    // See if any of our camera's reached max track
-    bool reached_max = false;
-    for (const auto &cams : (*it2)->timestamps) {
-      // Add one here to match openvins logic
-      if ((int)cams.second.size() > state->options.max_clone_size) {
-        reached_max = true;
-        break;
-      }
-    }
-    // If max track, then add it to our possible slam feature list
-    if (reached_max) {
-      feats_maxtracks.push_back(*it2);
-      it2 = feats_marg.erase(it2);
-    } else {
-      it2++;
-    }
-  }
-
-  // Count how many aruco tags we have in our state
-  int curr_aruco_tags = 0;
-  auto it0 = state->features_SLAM.begin();
-  while (it0 != state->features_SLAM.end()) {
-    if ((int)(*it0).second->featid <= 4 * state->options.max_aruco_features)
-      curr_aruco_tags++;
-    it0++;
-  }
-
-  // Append a new SLAM feature if we have the room to do so
-  // Also check that we have waited our delay amount (normally prevents bad
-  // first set of slam points)
-  if (state->options.max_slam_features > 0 &&
-      message.timestamp - startup_time >= params.dt_slam_delay &&
-      (int)state->features_SLAM.size() <
-          state->options.max_slam_features + curr_aruco_tags) {
-    // Get the total amount to add, then the max amount that we can add given
-    // our marginalize feature array
-    int amount_to_add = (state->options.max_slam_features + curr_aruco_tags) -
-                        (int)state->features_SLAM.size();
-    int valid_amount = (amount_to_add > (int)feats_maxtracks.size())
-                           ? (int)feats_maxtracks.size()
-                           : amount_to_add;
-    // If we have at least 1 that we can add, lets add it!
-    // Note: we remove them from the feat_marg array since we don't want to
-    // reuse information...
-    if (valid_amount > 0) {
-      feats_slam.insert(feats_slam.end(), feats_maxtracks.end() - valid_amount,
-                        feats_maxtracks.end());
-      feats_maxtracks.erase(feats_maxtracks.end() - valid_amount,
-                            feats_maxtracks.end());
-    }
-  }
-
-  // Loop through current SLAM features, we have tracks of them, grab them for
-  // this update! NOTE: if we have a slam feature that has lost tracking, then
-  // we should marginalize it out NOTE: we only enforce this if the current
-  // camera message is where the feature was seen from NOTE: if you do not use
-  // FEJ, these types of slam features *degrade* the estimator performance....
-  // NOTE: we will also marginalize SLAM features if they have failed their
-  // update a couple times in a row
-  for (std::pair<const size_t, std::shared_ptr<Landmark>> &landmark :
-       state->features_SLAM) {
-    if (trackARUCO != nullptr) {
-      std::shared_ptr<Feature> feat1 =
-          trackARUCO->get_feature_database()->get_feature(
-              landmark.second->featid);
-      if (feat1 != nullptr)
-        feats_slam.push_back(feat1);
-    }
-    std::shared_ptr<Feature> feat2 =
-        trackFEATS->get_feature_database()->get_feature(
-            landmark.second->featid);
-    if (feat2 != nullptr)
-      feats_slam.push_back(feat2);
-    assert(landmark.second->unique_camera_id != -1);
-    bool current_unique_cam =
-        std::find(message.sensor_ids.begin(), message.sensor_ids.end(),
-                  landmark.second->unique_camera_id) !=
-        message.sensor_ids.end();
-    if (feat2 == nullptr && current_unique_cam)
-      landmark.second->should_marg = true;
-    if (landmark.second->update_fail_count > 1)
-      landmark.second->should_marg = true;
-  }
-
-  // Separate our SLAM features into new ones, and old ones
   std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE;
-  for (size_t i = 0; i < feats_slam.size(); i++) {
-    if (state->features_SLAM.find(feats_slam.at(i)->featid) !=
-        state->features_SLAM.end()) {
-      feats_slam_UPDATE.push_back(feats_slam.at(i));
-      // PRINT_DEBUG("[UPDATE-SLAM]: found old feature %d (%d
-      // measurements)\n",(int)feats_slam.at(i)->featid,(int)feats_slam.at(i)->timestamps_left.size());
-    } else {
-      feats_slam_DELAYED.push_back(feats_slam.at(i));
-      // PRINT_DEBUG("[UPDATE-SLAM]: new feature ready %d (%d
-      // measurements)\n",(int)feats_slam.at(i)->featid,(int)feats_slam.at(i)->timestamps_left.size());
-    }
-  }
-
-  // Concatenate our MSCKF feature arrays (i.e., ones not being used for slam
-  // updates)
-  std::vector<std::shared_ptr<Feature>> featsup_MSCKF = feats_lost;
-  featsup_MSCKF.insert(featsup_MSCKF.end(), feats_marg.begin(),
-                       feats_marg.end());
-  featsup_MSCKF.insert(featsup_MSCKF.end(), feats_maxtracks.begin(),
-                       feats_maxtracks.end());
+  std::vector<std::shared_ptr<Feature>> featsup_MSCKF;
+  process_measurements_rules(message, featsup_MSCKF, feats_slam_UPDATE,
+                             feats_slam_DELAYED);
 
   //===================================================================================
   // Now that we have a list of features, lets do the EKF update for MSCKF and
@@ -1057,4 +893,170 @@ std::vector<Vec3> VioManager::get_features_ARUCO() {
     }
   }
   return aruco_feats;
+}
+
+void VioManager::process_measurements_rules(
+    const ov_core::CameraData &message,
+    std::vector<std::shared_ptr<Feature>> &featsup_MSCKF,
+    std::vector<std::shared_ptr<Feature>> &feats_slam_UPDATE,
+    std::vector<std::shared_ptr<Feature>> &feats_slam_DELAYED) {
+
+  std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_maxtracks;
+  std::vector<std::shared_ptr<Feature>> feats_slam;
+  feats_lost =
+      trackFEATS->get_feature_database()->features_not_containing_newer(
+          state->timestamp, false, true);
+
+  // Don't need to get the oldest features until we reach our max number of
+  // clones
+  if ((int)state->clones_IMU.size() == state->options.max_clone_size + 1 ||
+      (int)state->clones_IMU.size() > 5) {
+    feats_marg = trackFEATS->get_feature_database()->features_containing(
+        state->margtimestep(), false, true);
+    if (trackARUCO != nullptr &&
+        message.timestamp - startup_time >= params.dt_slam_delay) {
+      feats_slam = trackARUCO->get_feature_database()->features_containing(
+          state->margtimestep(), false, true);
+    }
+  }
+
+  // Remove any lost features that were from other image streams
+  // E.g: if we are cam1 and cam0 has not processed yet, we don't want to try to
+  // use those in the update yet E.g: thus we wait until cam0 process its newest
+  // image to remove features which were seen from that camera
+  auto it1 = feats_lost.begin();
+  while (it1 != feats_lost.end()) {
+    bool found_current_message_camid = false;
+    for (const auto &camuvpair : (*it1)->uvs) {
+      if (std::find(message.sensor_ids.begin(), message.sensor_ids.end(),
+                    camuvpair.first) != message.sensor_ids.end()) {
+        found_current_message_camid = true;
+        break;
+      }
+    }
+    if (found_current_message_camid) {
+      it1++;
+    } else {
+      it1 = feats_lost.erase(it1);
+    }
+  }
+
+  // We also need to make sure that the max tracks does not contain any lost
+  // features This could happen if the feature was lost in the last frame, but
+  // has a measurement at the marg timestep
+  it1 = feats_lost.begin();
+  while (it1 != feats_lost.end()) {
+    if (std::find(feats_marg.begin(), feats_marg.end(), (*it1)) !=
+        feats_marg.end()) {
+      it1 = feats_lost.erase(it1);
+    } else {
+      it1++;
+    }
+  }
+
+  // Find tracks that have reached max length, these can be made into SLAM
+  // features
+  auto it2 = feats_marg.begin();
+  while (it2 != feats_marg.end()) {
+    // See if any of our camera's reached max track
+    bool reached_max = false;
+    for (const auto &cams : (*it2)->timestamps) {
+      // Add one here to match openvins logic
+      if ((int)cams.second.size() > state->options.max_clone_size) {
+        reached_max = true;
+        break;
+      }
+    }
+    // If max track, then add it to our possible slam feature list
+    if (reached_max) {
+      feats_maxtracks.push_back(*it2);
+      it2 = feats_marg.erase(it2);
+    } else {
+      it2++;
+    }
+  }
+
+  // Count how many aruco tags we have in our state
+  int curr_aruco_tags = 0;
+  auto it0 = state->features_SLAM.begin();
+  while (it0 != state->features_SLAM.end()) {
+    if ((int)(*it0).second->featid <= 4 * state->options.max_aruco_features)
+      curr_aruco_tags++;
+    it0++;
+  }
+
+  // Append a new SLAM feature if we have the room to do so
+  // Also check that we have waited our delay amount (normally prevents bad
+  // first set of slam points)
+  if (state->options.max_slam_features > 0 &&
+      message.timestamp - startup_time >= params.dt_slam_delay &&
+      (int)state->features_SLAM.size() <
+          state->options.max_slam_features + curr_aruco_tags) {
+    // Get the total amount to add, then the max amount that we can add given
+    // our marginalize feature array
+    int amount_to_add = (state->options.max_slam_features + curr_aruco_tags) -
+                        (int)state->features_SLAM.size();
+    int valid_amount = (amount_to_add > (int)feats_maxtracks.size())
+                           ? (int)feats_maxtracks.size()
+                           : amount_to_add;
+    // If we have at least 1 that we can add, lets add it!
+    // Note: we remove them from the feat_marg array since we don't want to
+    // reuse information...
+    if (valid_amount > 0) {
+      feats_slam.insert(feats_slam.end(), feats_maxtracks.end() - valid_amount,
+                        feats_maxtracks.end());
+      feats_maxtracks.erase(feats_maxtracks.end() - valid_amount,
+                            feats_maxtracks.end());
+    }
+  }
+
+  // Loop through current SLAM features, we have tracks of them, grab them for
+  // this update! NOTE: if we have a slam feature that has lost tracking, then
+  // we should marginalize it out NOTE: we only enforce this if the current
+  // camera message is where the feature was seen from NOTE: if you do not use
+  // FEJ, these types of slam features *degrade* the estimator performance....
+  // NOTE: we will also marginalize SLAM features if they have failed their
+  // update a couple times in a row
+  for (std::pair<const size_t, std::shared_ptr<Landmark>> &landmark :
+       state->features_SLAM) {
+    if (trackARUCO != nullptr) {
+      std::shared_ptr<Feature> feat1 =
+          trackARUCO->get_feature_database()->get_feature(
+              landmark.second->featid);
+      if (feat1 != nullptr)
+        feats_slam.push_back(feat1);
+    }
+    std::shared_ptr<Feature> feat2 =
+        trackFEATS->get_feature_database()->get_feature(
+            landmark.second->featid);
+    if (feat2 != nullptr)
+      feats_slam.push_back(feat2);
+    assert(landmark.second->unique_camera_id != -1);
+    bool current_unique_cam =
+        std::find(message.sensor_ids.begin(), message.sensor_ids.end(),
+                  landmark.second->unique_camera_id) !=
+        message.sensor_ids.end();
+    if (feat2 == nullptr && current_unique_cam)
+      landmark.second->should_marg = true;
+    if (landmark.second->update_fail_count > 1)
+      landmark.second->should_marg = true;
+  }
+
+  // Separate our SLAM features into new ones, and old ones
+  for (size_t i = 0; i < feats_slam.size(); i++) {
+    if (state->features_SLAM.find(feats_slam.at(i)->featid) !=
+        state->features_SLAM.end()) {
+      feats_slam_UPDATE.push_back(feats_slam.at(i));
+    } else {
+      feats_slam_DELAYED.push_back(feats_slam.at(i));
+    }
+  }
+
+  // Concatenate our MSCKF feature arrays (i.e., ones not being used for slam
+  // updates)
+  featsup_MSCKF = feats_lost;
+  featsup_MSCKF.insert(featsup_MSCKF.end(), feats_marg.begin(),
+                       feats_marg.end());
+  featsup_MSCKF.insert(featsup_MSCKF.end(), feats_maxtracks.begin(),
+                       feats_maxtracks.end());
 }

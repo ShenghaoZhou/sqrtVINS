@@ -12,32 +12,26 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
 
-
-
-
-
 #ifndef OV_SRVINS_VIOMANAGER_H
 #define OV_SRVINS_VIOMANAGER_H
 
 #include <Eigen/StdVector>
-#include <algorithm>
 #include <atomic>
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include <memory>
 #include <mutex>
-#include <string>
 
 #include "VioManagerOptions.h"
 
@@ -46,6 +40,8 @@ struct ImuData;
 struct CameraData;
 class TrackBase;
 class FeatureInitializer;
+class Feature;
+
 } // namespace ov_core
 namespace ov_srvins {
 class InertialInitializer;
@@ -149,6 +145,16 @@ protected:
    * @param message Contains our timestamp, images, and camera ids
    */
   void track_image_and_update(const ov_core::CameraData &message);
+
+  /**
+   * @brief Helper to handle the logic of sorting features into different
+   * categories (lost, marg, slam, etc) for update.
+   */
+  void process_measurements_rules(
+      const ov_core::CameraData &message,
+      std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
+      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
+      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
 
   /**
    * @brief This will do the propagation and feature updates to the state

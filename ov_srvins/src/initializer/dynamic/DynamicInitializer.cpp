@@ -12,29 +12,24 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
 
-
-
-
-
 #include "DynamicInitializer.h"
 
+#include "OpengvHelper.h"
 #include "cpi/CpiV1.h"
 #include "feat/Feature.h"
 #include "feat/FeatureDatabase.h"
 #include "feat/FeatureHelper.h"
-
-#include "OpengvHelper.h"
 #include "state/State.h"
 #include "state/StateHelper.h"
 #include "types/IMU.h"
@@ -45,6 +40,7 @@
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 #include "utils/sensor_data.h"
+#include <fstream>
 
 #include "Solver.h"
 

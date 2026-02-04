@@ -360,26 +360,33 @@ void VioManager::feed_measurement_simulation(
   do_feature_propagate_update(message);
 }
 
-void VioManager::do_feature_propagate_update(
-    const ov_core::CameraData &message) {
-  //===================================================================================
-  // State propagation, and clone augmentation
-  //===================================================================================
-
+bool VioManager::propagate_state(double timestamp) {
   // Return if the camera measurement is out of order
-  if (state->timestamp > message.timestamp) {
+  if (state->timestamp > timestamp) {
     PRINT_WARNING(YELLOW "image received out of order, unable to do anything "
                          "(prop dt = %3f)\n" RESET,
-                  (message.timestamp - state->timestamp));
-    return;
+                  (timestamp - state->timestamp));
+    return false;
   }
 
   // Propagate the state forward to the current update time
   // Also augment it with a new clone!
   // NOTE: if the state is already at the given time (can happen in sim)
   // NOTE: then no need to prop since we already are at the desired timestep
-  if (state->timestamp != message.timestamp) {
-    propagator->propagate_and_clone(state, message.timestamp);
+  if (state->timestamp != timestamp) {
+    propagator->propagate_and_clone(state, timestamp);
+  }
+  return true;
+}
+
+void VioManager::do_feature_propagate_update(
+    const ov_core::CameraData &message) {
+  //===================================================================================
+  // State propagation, and clone augmentation
+  //===================================================================================
+
+  if (!propagate_state(message.timestamp)) {
+    return;
   }
   rT3 = boost::posix_time::microsec_clock::local_time();
 
@@ -407,6 +414,10 @@ void VioManager::do_feature_propagate_update(
   }
   has_moved_since_zupt = true;
 
+  update_state(message);
+}
+
+void VioManager::update_state(const ov_core::CameraData &message) {
   //===================================================================================
   // MSCKF features and KLT tracks that are SLAM features
   //===================================================================================
@@ -442,8 +453,8 @@ void VioManager::do_feature_propagate_update(
   // Now, lets get all features that should be used for an update that are lost
   // in the newest frame We explicitly request features that have not been
   // deleted (used) in another update step
-  std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE;
-  std::vector<std::shared_ptr<Feature>> featsup_MSCKF;
+  std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE,
+      featsup_MSCKF;
   process_measurements_rules(message, featsup_MSCKF, feats_slam_UPDATE,
                              feats_slam_DELAYED);
 
@@ -452,33 +463,7 @@ void VioManager::do_feature_propagate_update(
   // SLAM!
   //===================================================================================
 
-  // Sort based on track length
-  // TODO: we should have better selection logic here (i.e. even feature
-  // distribution in the FOV etc..)
-  // TODO: right now features that are "lost" are at the front of this vector,
-  // while ones at the end are long-tracks
-  auto compare_feat = [](const std::shared_ptr<Feature> &a,
-                         const std::shared_ptr<Feature> &b) -> bool {
-    size_t asize = 0;
-    size_t bsize = 0;
-    for (const auto &pair : a->timestamps)
-      asize += pair.second.size();
-    for (const auto &pair : b->timestamps)
-      bsize += pair.second.size();
-    return asize < bsize;
-  };
-  std::sort(featsup_MSCKF.begin(), featsup_MSCKF.end(), compare_feat);
-  // state->xk_minus_x0_ = VecX::Zero(state->get_state_size());
-
-  // Pass them to our MSCKF updater
-  // NOTE: if we have more then the max, we select the "best" ones (i.e. max
-  // tracks) for this update NOTE: this should only really be used if you want
-  // to track a lot of features, or have limited computational resources
   state->setup_matrix_buffer();
-  if ((int)featsup_MSCKF.size() > state->options.max_msckf_in_update)
-    featsup_MSCKF.erase(featsup_MSCKF.begin(),
-                        featsup_MSCKF.end() -
-                            state->options.max_msckf_in_update);
   updaterMSCKF->update(state, featsup_MSCKF);
   rT5 = boost::posix_time::microsec_clock::local_time();
 
@@ -1059,4 +1044,31 @@ void VioManager::process_measurements_rules(
                        feats_marg.end());
   featsup_MSCKF.insert(featsup_MSCKF.end(), feats_maxtracks.begin(),
                        feats_maxtracks.end());
+
+  // Sort based on track length
+  // TODO: we should have better selection logic here (i.e. even feature
+  // distribution in the FOV etc..)
+  // TODO: right now features that are "lost" are at the front of this vector,
+  // while ones at the end are long-tracks
+  auto compare_feat = [](const std::shared_ptr<Feature> &a,
+                         const std::shared_ptr<Feature> &b) -> bool {
+    size_t asize = 0;
+    size_t bsize = 0;
+    for (const auto &pair : a->timestamps)
+      asize += pair.second.size();
+    for (const auto &pair : b->timestamps)
+      bsize += pair.second.size();
+    return asize < bsize;
+  };
+  std::sort(featsup_MSCKF.begin(), featsup_MSCKF.end(), compare_feat);
+  // state->xk_minus_x0_ = VecX::Zero(state->get_state_size());
+
+  // Pass them to our MSCKF updater
+  // NOTE: if we have more then the max, we select the "best" ones (i.e. max
+  // tracks) for this update NOTE: this should only really be used if you want
+  // to track a lot of features, or have limited computational resources
+  if ((int)featsup_MSCKF.size() > state->options.max_msckf_in_update)
+    featsup_MSCKF.erase(featsup_MSCKF.begin(),
+                        featsup_MSCKF.end() -
+                            state->options.max_msckf_in_update);
 }

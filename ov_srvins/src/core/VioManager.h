@@ -157,6 +157,19 @@ protected:
       std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
 
   /**
+   * @brief Helper to propagate the state forward and manage clones
+   * @param timestamp Target timestamp to propagate to
+   * @return True if propagation was successful
+   */
+  bool propagate_state(double timestamp);
+
+  /**
+   * @brief Helper to update the state with features
+   * @param message Camera data containing features
+   */
+  void update_state(const ov_core::CameraData &message);
+
+  /**
    * @brief This will do the propagation and feature updates to the state
    * @param message Contains our timestamp, images, and camera ids
    */

@@ -45,13 +45,14 @@ Solver::Solver(
     const std::vector<std::shared_ptr<ov_core::Feature>> &features_vec,
     const std::set<double> &map_camera_times,
     std::shared_ptr<ov_srvins::Propagator> propagator,
-    std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf,
-    std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam)
+    const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+    const ov_core::FeatureInitializerOptions &feat_init_options)
     : state_(state), features_vec_(features_vec),
       map_camera_times_(map_camera_times), propagator_(propagator),
-      updater_msckf_(updater_msckf), updater_slam_(updater_slam) {
+      msckf_options_(msckf_options), slam_options_(slam_options),
+      feat_init_options_(feat_init_options) {
   StateHelper::initialize_state(state_, x_init, *map_camera_times_.begin());
-}
+} 
 
 bool Solver::solve() {
   // Don't use FEJ during initialization to avoid slow convergence
@@ -110,14 +111,15 @@ bool Solver::solve() {
     state_->clear();
     state_->setup_matrix_buffer();
     state_->calculate_clone_poses();
-    updater_msckf_->update(state_, features_vec_, true, false);
+    // Use provided updater and feature-init options
+    UpdaterMSCKF::update(state_, features_vec_, msckf_options_, feat_init_options_, true, false);
     if (state_->features_MSCKF.empty()) {
       PRINT_WARNING(RED "[init-d]: no feature triangulated! \n" RESET);
       return false;
     }
 
     StateHelper::iterative_update_llt(state_);
-    updater_msckf_->update_features(state_);
+    UpdaterMSCKF::update_features(state_);
     if (convergence_check() && (int)state_->features_MSCKF.size() >=
                                    state_->init_options.init_min_feat)
       break;
@@ -140,8 +142,9 @@ bool Solver::solve() {
     state_->setup_matrix_buffer();
     std::vector<std::shared_ptr<ov_core::Feature>> feat_slam_init;
     select_slam_features(feat_slam_init);
-    updater_slam_->delayed_init_from_MSCKF(state_, feat_slam_init);
-    updater_msckf_->update(state_, features_vec_, true, true);
+    // Use stored options
+    UpdaterSLAM::delayed_init_from_MSCKF(state_, feat_slam_init, msckf_options_, slam_options_);
+    UpdaterMSCKF::update(state_, features_vec_, msckf_options_, feat_init_options_, true, true);
     StateHelper::initialize_slam_in_U(state_);
     StateHelper::update_llt(state_, true);
   }

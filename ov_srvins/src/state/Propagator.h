@@ -33,6 +33,7 @@
 #include <memory>
 #include <mutex>
 
+#include "IMUHandler.h"
 #include "utils/NoiseManager.h"
 
 #include "utils/print.h"
@@ -51,7 +52,10 @@ class State;
  * and covariance. For derivations look at @ref propagation page which has
  * detailed equations.
  */
-class Propagator {
+class 
+
+
+Propagator {
 
 public:
   /**
@@ -110,13 +114,12 @@ public:
                             Eigen::Matrix<DataType, 12, 12> &covariance);
 
   void get_imu_data(std::vector<ov_core::ImuData> &imu_data) {
-    imu_data = imu_data_;
+    imu_handler_.get_imu_data(imu_data);
   }
 
   // Point to the same imu data
   std::shared_ptr<std::vector<ov_core::ImuData>> get_imu_data() {
-    return std::shared_ptr<std::vector<ov_core::ImuData>>(&imu_data_,
-                                                          [](auto *) {});
+    return imu_handler_.get_imu_data();
   }
 
 protected:
@@ -217,10 +220,8 @@ protected:
   /// Container for the noise values
   NoiseManager noises_;
 
-  /// Our history of IMU messages (time, angular, linear)
-  std::vector<ov_core::ImuData> imu_data_;
-
-  std::mutex imu_data_mtx_;
+  /// IMU data handler
+  IMUHandler imu_handler_;
 
   /// Gravity vector
   Vec3 gravity_;

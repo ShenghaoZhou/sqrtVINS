@@ -34,6 +34,7 @@
 #include "state/State.h"
 #include "update/UpdaterMSCKF.h"
 #include "update/UpdaterSLAM.h"
+#include "update/UpdaterOptions.h"
 #include "utils/sensor_data.h"
 
 namespace ov_srvins {
@@ -75,8 +76,8 @@ public:
       const std::vector<std::shared_ptr<ov_core::Feature>> &features_vec,
       const std::set<double> &map_camera_times,
       std::shared_ptr<ov_srvins::Propagator> propagator,
-      std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf,
-      std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam);
+      const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+      const ov_core::FeatureInitializerOptions &feat_init_options);
 
   /**
    * @brief Solve the optimization problem
@@ -121,11 +122,14 @@ private:
   // Shared Propagator with VIO
   std::shared_ptr<ov_srvins::Propagator> propagator_;
 
-  // Shared updater for MSCKF features with VIO
-  std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf_;
 
-  // Shared updater for SLAM features with VIO
-  std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam_;
+
+  // Options used for updater calls
+  UpdaterOptions msckf_options_;
+  UpdaterOptions slam_options_;
+
+  // Feature init options
+  ov_core::FeatureInitializerOptions feat_init_options_;
 
   // Record the statistics during optimization
   SolverMonitor solver_statistics_;

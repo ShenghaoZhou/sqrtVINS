@@ -34,6 +34,7 @@
 #include "types/Landmark.h"
 #include "update/UpdaterMSCKF.h"
 #include "update/UpdaterSLAM.h"
+#include "update/UpdaterOptions.h"
 #include "utils/sensor_data.h"
 
 namespace ov_srvins {
@@ -68,7 +69,9 @@ public:
   explicit DynamicInitializer(
       const InertialInitializerOptions &params_,
       std::shared_ptr<ov_core::FeatureDatabase> db,
-      std::shared_ptr<ov_srvins::Propagator> propagator_);
+      std::shared_ptr<ov_srvins::Propagator> propagator_,
+      const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+      const ov_core::FeatureInitializerOptions &feat_init_options);
 
   /**
    * @brief Try to get the initialized system state
@@ -242,6 +245,11 @@ private:
   std::shared_ptr<ov_srvins::Propagator> propagator_;
 
   // Note: updaterMSCKF and updaterSLAM are now static functions
+
+  // Options forwarded to updaters / feature initializer
+  UpdaterOptions msckf_options_;
+  UpdaterOptions slam_options_;
+  ov_core::FeatureInitializerOptions feat_init_options_;
 
   // Store gravity vector
   Vec3 gravity_;

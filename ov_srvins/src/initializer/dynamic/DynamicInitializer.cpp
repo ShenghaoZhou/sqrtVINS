@@ -51,8 +51,12 @@ using namespace ov_srvins;
 DynamicInitializer::DynamicInitializer(
     const InertialInitializerOptions &params,
     std::shared_ptr<ov_core::FeatureDatabase> db,
-    std::shared_ptr<ov_srvins::Propagator> propagator)
-    : params_(params), db_(db), propagator_(propagator) {
+    std::shared_ptr<ov_srvins::Propagator> propagator,
+    const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+    const ov_core::FeatureInitializerOptions &feat_init_options)
+    : params_(params), db_(db), propagator_(propagator),
+      msckf_options_(msckf_options), slam_options_(slam_options),
+      feat_init_options_(feat_init_options) {
   gravity_ << 0.0, 0.0, params_.gravity_mag;
 }
 
@@ -349,7 +353,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
 
   // Initialize the first state
   Solver srf_solver(state, imu_init, features_vec, map_camera_times,
-                    propagator_, updater_msckf_, updater_slam_);
+                    propagator_, msckf_options_, slam_options_, feat_init_options_);
 
   // Solve the problem
   if (!srf_solver.solve()) {

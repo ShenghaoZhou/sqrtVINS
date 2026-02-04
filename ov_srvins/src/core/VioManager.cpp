@@ -162,7 +162,8 @@ VioManager::VioManager(VioManagerOptions &params_)
 
   // Our state initialize
   initializer = std::make_shared<ov_srvins::InertialInitializer>(
-      params.init_options, trackFEATS->get_feature_database(), propagator);
+      params.init_options, trackFEATS->get_feature_database(), propagator,
+      params.msckf_options, params.slam_options, params.featinit_options);
 
   // If we are using zero velocity updates, then create the updater
   if (params.try_zupt) {
@@ -293,7 +294,8 @@ void VioManager::feed_measurement_simulation(
     // Need to also replace it in init and zv-upt since it points to the
     // trackFEATS db pointer
     initializer = std::make_shared<ov_srvins::InertialInitializer>(
-        params.init_options, trackFEATS->get_feature_database(), propagator);
+        params.init_options, trackFEATS->get_feature_database(), propagator,
+        params.msckf_options, params.slam_options, params.featinit_options);
     if (params.try_zupt) {
       updaterZUPT = std::make_shared<UpdaterZeroVelocity>(
           params.zupt_options, params.imu_noises,

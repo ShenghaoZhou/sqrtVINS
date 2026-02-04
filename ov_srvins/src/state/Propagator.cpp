@@ -50,26 +50,11 @@ Propagator::Propagator(NoiseManager noises, DataType gravity_mag)
 }
 
 void Propagator::feed_imu(const ov_core::ImuData &message, double oldest_time) {
-
-  // Append it to our vector
-  std::lock_guard<std::mutex> lck(imu_data_mtx_);
-  imu_data_.emplace_back(message);
-
-  // Clean old measurements
-  clean_old_imu_measurements(oldest_time);
+  imu_handler_.feed_imu(message, oldest_time);
 }
 
 void Propagator::clean_old_imu_measurements(double oldest_time) {
-  if (oldest_time < 0)
-    return;
-  auto it0 = imu_data_.begin();
-  while (it0 != imu_data_.end()) {
-    if (it0->timestamp < oldest_time) {
-      it0 = imu_data_.erase(it0);
-    } else {
-      it0++;
-    }
-  }
+  imu_handler_.clean_old_imu_measurements(oldest_time);
 }
 
 bool Propagator::fast_state_propagate(
@@ -88,10 +73,9 @@ bool Propagator::fast_state_propagate(
   double time0 = state_time + t_off;
   double time1 = timestamp + t_off;
   std::vector<ov_core::ImuData> prop_data;
-  {
-    std::lock_guard<std::mutex> lck(imu_data_mtx_);
-    prop_data = select_imu_readings(imu_data_, time0, time1, false);
-  }
+  imu_handler_.with_imu_data([&](const auto& imu_data) {
+    prop_data = select_imu_readings(imu_data, time0, time1, false);
+  });
   if (prop_data.size() < 2)
     return false;
 
@@ -476,10 +460,9 @@ void Propagator::propagate_and_clone(std::shared_ptr<State> state,
   double time0 = state->timestamp + last_prop_time_offset_;
   double time1 = timestamp + t_off_new;
   std::vector<ov_core::ImuData> prop_data;
-  {
-    std::lock_guard<std::mutex> lck(imu_data_mtx_);
-    prop_data = select_imu_readings(imu_data_, time0, time1);
-  }
+  imu_handler_.with_imu_data([&](const auto& imu_data) {
+    prop_data = select_imu_readings(imu_data, time0, time1);
+  });
 
   // We are going to sum up all the state transition matrices, so we can do a
   // single large multiplication at the end Phi_summed = Phi_i*Phi_summed

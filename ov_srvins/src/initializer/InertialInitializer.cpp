@@ -44,16 +44,20 @@ using namespace ov_srvins;
 InertialInitializer::InertialInitializer(
     const InertialInitializerOptions &params,
     std::shared_ptr<ov_core::FeatureDatabase> db,
-    std::shared_ptr<ov_srvins::Propagator> propagator)
-    : params_(params), db_(db), propagator_(propagator) {
+    std::shared_ptr<ov_srvins::Propagator> propagator,
+    const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+    const ov_core::FeatureInitializerOptions &feat_init_options)
+    : params_(params), db_(db), propagator_(propagator),
+      msckf_options_(msckf_options), slam_options_(slam_options),
+      feat_init_options_(feat_init_options) {
 
   // Vector of our IMU data
   imu_data_ = propagator->get_imu_data();
 
   // Create initializers
   init_static_ = std::make_unique<StaticInitializer>(params_, db_, imu_data_);
-  init_dynamic_ =
-      std::make_unique<DynamicInitializer>(params_, db_, propagator);
+  init_dynamic_ = std::make_unique<DynamicInitializer>(
+      params_, db_, propagator, msckf_options_, slam_options_, feat_init_options_);
 }
 
 bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,

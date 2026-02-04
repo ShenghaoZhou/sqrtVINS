@@ -28,8 +28,10 @@
 
 #include "InertialInitializerOptions.h"
 #include "feat/FeatureDatabase.h"
+#include "feat/FeatureInitializerOptions.h"
 #include "initializer/dynamic/DynamicInitializer.h"
 #include "initializer/static/StaticInitializer.h"
+#include "update/UpdaterOptions.h"
 #include "state/Propagator.h"
 #include "state/State.h"
 #include "update/UpdaterMSCKF.h"
@@ -57,7 +59,9 @@ public:
   explicit InertialInitializer(
       const InertialInitializerOptions &params,
       std::shared_ptr<ov_core::FeatureDatabase> db,
-      std::shared_ptr<ov_srvins::Propagator> propagator);
+      std::shared_ptr<ov_srvins::Propagator> propagator,
+      const UpdaterOptions &msckf_options, const UpdaterOptions &slam_options,
+      const ov_core::FeatureInitializerOptions &feat_init_options);
 
   /**
    * @brief Try to get the initialized system
@@ -77,6 +81,11 @@ protected:
 
   // Propagator shared with VIO
   std::shared_ptr<ov_srvins::Propagator> propagator_;
+
+  // Options forwarded from VIO
+  UpdaterOptions msckf_options_;
+  UpdaterOptions slam_options_;
+  ov_core::FeatureInitializerOptions feat_init_options_;
 
   // Note: updaterMSCKF and updaterSLAM are now static functions
 

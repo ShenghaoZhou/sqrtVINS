@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #ifndef OV_SRVINS_DYNAMICINITIALIZER_H
 #define OV_SRVINS_DYNAMICINITIALIZER_H
@@ -68,15 +64,11 @@ public:
    * @param params_ Parameters loaded from either ROS or CMDLINE
    * @param db Feature tracker database with all features in it
    * @param propagator Propagator shared with VIO
-   * @param updater_msckf MSCKF feature updater shared with VIO
-   * @param updater_slam SLAM feature updater shared with VIO
    */
   explicit DynamicInitializer(
       const InertialInitializerOptions &params_,
       std::shared_ptr<ov_core::FeatureDatabase> db,
-      std::shared_ptr<ov_srvins::Propagator> propagator_,
-      std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf_,
-      std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam_);
+      std::shared_ptr<ov_srvins::Propagator> propagator_);
 
   /**
    * @brief Try to get the initialized system state
@@ -249,11 +241,7 @@ private:
   // Propagator shared with VIO
   std::shared_ptr<ov_srvins::Propagator> propagator_;
 
-  // MSCKF feature updater shared with VIO
-  std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf_;
-
-  // SLAM feature updater shared with VIO
-  std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam_;
+  // Note: updaterMSCKF and updaterSLAM are now static functions
 
   // Store gravity vector
   Vec3 gravity_;

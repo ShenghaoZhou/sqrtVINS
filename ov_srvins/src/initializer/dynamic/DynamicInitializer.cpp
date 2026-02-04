@@ -51,11 +51,8 @@ using namespace ov_srvins;
 DynamicInitializer::DynamicInitializer(
     const InertialInitializerOptions &params,
     std::shared_ptr<ov_core::FeatureDatabase> db,
-    std::shared_ptr<ov_srvins::Propagator> propagator,
-    std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf,
-    std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam)
-    : params_(params), db_(db), propagator_(propagator),
-      updater_msckf_(updater_msckf), updater_slam_(updater_slam) {
+    std::shared_ptr<ov_srvins::Propagator> propagator)
+    : params_(params), db_(db), propagator_(propagator) {
   gravity_ << 0.0, 0.0, params_.gravity_mag;
 }
 

@@ -206,11 +206,8 @@ protected:
   /// Boolean if we are initialized or not
   bool is_initialized_vio = false;
 
-  /// Our MSCKF feature updater
-  std::shared_ptr<UpdaterMSCKF> updaterMSCKF;
-
-  /// Our SLAM/ARUCO feature updater
-  std::shared_ptr<UpdaterSLAM> updaterSLAM;
+  // Note: updaterMSCKF and updaterSLAM have been converted to stateless static
+  // functions
 
   /// Our zero velocity tracker
   std::shared_ptr<UpdaterZeroVelocity> updaterZUPT;

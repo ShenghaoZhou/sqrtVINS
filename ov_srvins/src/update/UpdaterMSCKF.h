@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #ifndef OV_SRVINS_UPDATER_MSCKF_H
 #define OV_SRVINS_UPDATER_MSCKF_H
@@ -53,18 +49,8 @@ namespace ov_srvins {
 class UpdaterMSCKF {
 
 public:
-  /**
-   * @brief Default constructor for our MSCKF updater
-   *
-   * Our updater has a feature initializer which we use to initialize features
-   * as needed. Also the options allow for one to tune the different parameters
-   * for update.
-   *
-   * @param options Updater options (include measurement noise value)
-   * @param feat_init_options Feature initializer options
-   */
-  UpdaterMSCKF(UpdaterOptions &options,
-               ov_core::FeatureInitializerOptions &feat_init_options);
+  // Deleted default constructor
+  UpdaterMSCKF() = delete;
 
   /**
    * @brief Given tracked features, this will try to use them to update the
@@ -72,11 +58,16 @@ public:
    *
    * @param state State of the filter
    * @param feature_vec Features that can be used for update
+   * @param options Updater options for MSCKF
+   * @param feat_init_options Options for feature initialization
    * @param is_iterative If we are doing an iterative update (store jacobians)
    */
-  void update(std::shared_ptr<State> state,
-              std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
-              bool is_iterative = false, bool require_HUT = true);
+  static void
+  update(std::shared_ptr<State> state,
+         std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
+         const UpdaterOptions &options,
+         ov_core::FeatureInitializerOptions &feat_init_options,
+         bool is_iterative = false, bool require_HUT = true);
 
   /**
    * @brief Update MSCKF features in the state, used in iterative update
@@ -84,17 +75,7 @@ public:
    * @param state State of the filter
    * @return  void    [return description]
    */
-  void update_features(std::shared_ptr<State> state);
-
-protected:
-  /// Options used during update
-  UpdaterOptions options_;
-
-  /// Feature initializer class object
-  std::shared_ptr<ov_core::FeatureInitializer> initializer_feat_;
-
-  /// Chi squared 95th percentile table (lookup would be size of residual)
-  std::map<int, DataType> chi_squared_table_;
+  static void update_features(std::shared_ptr<State> state);
 };
 
 } // namespace ov_srvins

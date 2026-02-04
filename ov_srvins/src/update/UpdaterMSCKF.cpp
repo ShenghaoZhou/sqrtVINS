@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #include "UpdaterMSCKF.h"
 
@@ -49,31 +45,32 @@ using namespace ov_core;
 using namespace ov_type;
 using namespace ov_srvins;
 
-UpdaterMSCKF::UpdaterMSCKF(
-    UpdaterOptions &options,
-    ov_core::FeatureInitializerOptions &feat_init_options)
-    : options_(options) {
-
-  // Save our feature initializer
-  initializer_feat_ = std::shared_ptr<ov_core::FeatureInitializer>(
-      new ov_core::FeatureInitializer(feat_init_options));
-
-  // Initialize the chi squared test table with confidence level 0.95
-  // https://github.com/KumarRobotics/msckf_vio/blob/050c50defa5a7fd9a04c1eed5687b405f02919b5/src/msckf_vio.cpp#L215-L221
-  for (int i = 1; i < 500; i++) {
-    boost::math::chi_squared chi_squared_dist(i);
-    chi_squared_table_[i] = boost::math::quantile(chi_squared_dist, 0.95);
-  }
-}
+// Removed constructor
+// UpdaterMSCKF::UpdaterMSCKF(...)
 
 void UpdaterMSCKF::update(std::shared_ptr<State> state,
                           std::vector<std::shared_ptr<Feature>> &feature_vec,
+                          const UpdaterOptions &options,
+                          ov_core::FeatureInitializerOptions &feat_init_options,
                           bool is_iterative, bool require_HUT) {
   Timer t, t1, t2, t3, t4;
 
   // Return if no features
   if (feature_vec.empty())
     return;
+
+  // Initialize the chi squared test table with confidence level 0.95
+  static std::map<int, DataType> chi_squared_table;
+  if (chi_squared_table.empty()) {
+    for (int i = 1; i < 500; i++) {
+      boost::math::chi_squared chi_squared_dist(i);
+      chi_squared_table[i] = boost::math::quantile(chi_squared_dist, 0.95);
+    }
+  }
+
+  // Create our feature initializer
+  auto initializer_feat =
+      std::make_shared<ov_core::FeatureInitializer>(feat_init_options);
 
   bool do_clean = !is_iterative;
 
@@ -156,17 +153,16 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
 
     // Triangulate the feature and remove if it fails
     bool success_tri = true;
-    if (initializer_feat_->config().triangulate_1d) {
-      success_tri =
-          initializer_feat_->single_triangulation_1d(*it1, clones_cam);
+    if (initializer_feat->config().triangulate_1d) {
+      success_tri = initializer_feat->single_triangulation_1d(*it1, clones_cam);
     } else {
-      success_tri = initializer_feat_->single_triangulation(*it1, clones_cam);
+      success_tri = initializer_feat->single_triangulation(*it1, clones_cam);
     }
 
     // Gauss-newton refine the feature
     bool success_refine = true;
-    if (initializer_feat_->config().refine_features) {
-      success_refine = initializer_feat_->single_gaussnewton(*it1, clones_cam);
+    if (initializer_feat->config().refine_features) {
+      success_refine = initializer_feat->single_gaussnewton(*it1, clones_cam);
     }
 
     // Remove the feature if not a success
@@ -297,14 +293,14 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
       // Cholesky here is more efficient than QR
       if (!is_iterative) {
         MatX S = HUT * HUT.transpose();
-        S.diagonal() += options_.sigma_pix_sq * VecX::Ones(S.rows());
+        S.diagonal() += options.sigma_pix_sq * VecX::Ones(S.rows());
         DataType chi2 = res2.dot(S.llt().solve(res2));
 
         // Get our threshold (we precompute up to 500 but handle the case that
         // it is more)
         DataType chi2_check;
         if (res.rows() < 500) {
-          chi2_check = chi_squared_table_[res.rows()];
+          chi2_check = chi_squared_table[res.rows()];
         } else {
           boost::math::chi_squared chi_squared_dist(res.rows());
           chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
@@ -314,7 +310,7 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
         }
 
         // Check if we should delete or not
-        if (chi2 > options_.chi2_multipler * chi2_check && do_clean) {
+        if (chi2 > options.chi2_multipler * chi2_check && do_clean) {
           (*it2)->to_delete = true;
           it2 = feature_vec.erase(it2);
           continue;
@@ -322,22 +318,22 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
       }
 
       VecX RHTr = VecX::Zero(state->get_state_size());
-      VecX RHTr_small = H_x2.transpose() * res2 * options_.sigma_pix_sq_inv;
+      VecX RHTr_small = H_x2.transpose() * res2 * options.sigma_pix_sq_inv;
       int local_id = 0;
       for (const auto &var : Hx_order) {
         RHTr.middleRows(var->id(), var->size()) =
             RHTr_small.middleRows(local_id, var->size());
         local_id += var->size();
       }
-      HUT *= options_.sigma_pix_inv;
+      HUT *= options.sigma_pix_inv;
       state->store_update_factor(HUT,
                                  RHTr); // store the factored version
     }
 
     if (is_iterative) {
       // Store Jaocbians for iterative update
-      H_x2 *= options_.sigma_pix_inv;
-      res2 *= options_.sigma_pix_inv;
+      H_x2 *= options.sigma_pix_inv;
+      res2 *= options.sigma_pix_inv;
       state->store_update_jacobians(H_x2, res2,
                                     Hx_order); // store the whiten versin
 
@@ -365,9 +361,9 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
       }
 
       // Store Msckf jacobians
-      H_f1 *= options_.sigma_pix_inv;
-      H_x1 *= options_.sigma_pix_inv;
-      res1 *= options_.sigma_pix_inv;
+      H_f1 *= options.sigma_pix_inv;
+      H_x1 *= options.sigma_pix_inv;
+      res1 *= options.sigma_pix_inv;
       it_feat->second->store_msckf_jacobians(
           H_f1, H_x1, res1,
           Hx_order); // store the whiten version

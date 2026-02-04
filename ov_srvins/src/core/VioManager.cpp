@@ -157,16 +157,12 @@ VioManager::VioManager(VioManagerOptions &params_)
   propagator =
       std::make_shared<Propagator>(params.imu_noises, params.gravity_mag);
 
-  // Make the updater!
-  updaterMSCKF = std::make_shared<UpdaterMSCKF>(params.msckf_options,
-                                                params.featinit_options);
-  updaterSLAM = std::make_shared<UpdaterSLAM>(
-      params.slam_options, params.aruco_options, params.featinit_options);
+  // Note: updaterMSCKF and updaterSLAM are now stateless static functions
+  // They are called directly with parameters where needed
 
   // Our state initialize
   initializer = std::make_shared<ov_srvins::InertialInitializer>(
-      params.init_options, trackFEATS->get_feature_database(), propagator,
-      updaterMSCKF, updaterSLAM);
+      params.init_options, trackFEATS->get_feature_database(), propagator);
 
   // If we are using zero velocity updates, then create the updater
   if (params.try_zupt) {
@@ -297,8 +293,7 @@ void VioManager::feed_measurement_simulation(
     // Need to also replace it in init and zv-upt since it points to the
     // trackFEATS db pointer
     initializer = std::make_shared<ov_srvins::InertialInitializer>(
-        params.init_options, trackFEATS->get_feature_database(), propagator,
-        updaterMSCKF, updaterSLAM);
+        params.init_options, trackFEATS->get_feature_database(), propagator);
     if (params.try_zupt) {
       updaterZUPT = std::make_shared<UpdaterZeroVelocity>(
           params.zupt_options, params.imu_noises,
@@ -443,7 +438,7 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   if (state->options.do_fej) {
     state->calculate_clone_poses_fej();
   }
-  updaterSLAM->change_anchors(state);
+  UpdaterSLAM::change_anchors(state);
 
   // Firstly marginalize the oldest clone if needed
   StateHelper::marginalize_old_clone(state);
@@ -464,7 +459,8 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   //===================================================================================
 
   state->setup_matrix_buffer();
-  updaterMSCKF->update(state, featsup_MSCKF);
+  UpdaterMSCKF::update(state, featsup_MSCKF, params.msckf_options,
+                       params.featinit_options);
   rT5 = boost::posix_time::microsec_clock::local_time();
 
   // Perform SLAM delay init and update
@@ -472,10 +468,12 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   // NOTE: this will be a lot faster but won't be as accurate.
 
   // Do the update
-  updaterSLAM->update(state, feats_slam_UPDATE);
+  UpdaterSLAM::update(state, feats_slam_UPDATE, params.slam_options,
+                      params.aruco_options);
 
   rT6 = boost::posix_time::microsec_clock::local_time();
-  updaterSLAM->delayed_init(state, feats_slam_DELAYED);
+  UpdaterSLAM::delayed_init(state, feats_slam_DELAYED, params.slam_options,
+                            params.aruco_options, params.featinit_options);
   rT7 = boost::posix_time::microsec_clock::local_time();
   StateHelper::initialize_slam_in_U(state);
   rT8 = boost::posix_time::microsec_clock::local_time();

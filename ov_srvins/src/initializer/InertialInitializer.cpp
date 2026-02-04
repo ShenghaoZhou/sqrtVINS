@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #include "InertialInitializer.h"
 
@@ -48,19 +44,16 @@ using namespace ov_srvins;
 InertialInitializer::InertialInitializer(
     const InertialInitializerOptions &params,
     std::shared_ptr<ov_core::FeatureDatabase> db,
-    std::shared_ptr<ov_srvins::Propagator> propagator,
-    std::shared_ptr<ov_srvins::UpdaterMSCKF> updater_msckf,
-    std::shared_ptr<ov_srvins::UpdaterSLAM> updater_slam)
-    : params_(params), db_(db), propagator_(propagator),
-      updater_msckf_(updater_msckf), updater_slam_(updater_slam) {
+    std::shared_ptr<ov_srvins::Propagator> propagator)
+    : params_(params), db_(db), propagator_(propagator) {
 
   // Vector of our IMU data
   imu_data_ = propagator->get_imu_data();
 
   // Create initializers
   init_static_ = std::make_unique<StaticInitializer>(params_, db_, imu_data_);
-  init_dynamic_ = std::make_unique<DynamicInitializer>(
-      params_, db_, propagator, updater_msckf, updater_slam);
+  init_dynamic_ =
+      std::make_unique<DynamicInitializer>(params_, db_, propagator);
 }
 
 bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,

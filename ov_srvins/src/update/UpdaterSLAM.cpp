@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #include "UpdaterSLAM.h"
 
@@ -50,26 +46,17 @@ using namespace ov_core;
 using namespace ov_type;
 using namespace ov_srvins;
 
-UpdaterSLAM::UpdaterSLAM(UpdaterOptions &options_slam,
-                         UpdaterOptions &options_aruco,
-                         ov_core::FeatureInitializerOptions &feat_init_options)
-    : options_slam_(options_slam), options_aruco_(options_aruco) {
-
-  // Save our feature initializer
-  initializer_feat_ = std::shared_ptr<ov_core::FeatureInitializer>(
-      new ov_core::FeatureInitializer(feat_init_options));
-
-  // Initialize the chi squared test table with confidence level 0.95
-  // https://github.com/KumarRobotics/msckf_vio/blob/050c50defa5a7fd9a04c1eed5687b405f02919b5/src/msckf_vio.cpp#L215-L221
-  for (int i = 1; i < 500; i++) {
-    boost::math::chi_squared chi_squared_dist(i);
-    chi_squared_table_[i] = boost::math::quantile(chi_squared_dist, 0.95);
-  }
-}
+// Removed constructor - UpdaterSLAM is now fully static
 
 void UpdaterSLAM::delayed_init(
     std::shared_ptr<State> state,
-    std::vector<std::shared_ptr<Feature>> &feature_vec) {
+    std::vector<std::shared_ptr<Feature>> &feature_vec,
+    const UpdaterOptions &options_slam, const UpdaterOptions &options_aruco,
+    ov_core::FeatureInitializerOptions &feat_init_options) {
+
+  // Create our feature initializer
+  auto initializer_feat =
+      std::make_shared<ov_core::FeatureInitializer>(feat_init_options);
 
   // Return if no features
   if (feature_vec.empty())
@@ -145,17 +132,16 @@ void UpdaterSLAM::delayed_init(
 
     // Triangulate the feature and remove if it fails
     bool success_tri = true;
-    if (initializer_feat_->config().triangulate_1d) {
-      success_tri =
-          initializer_feat_->single_triangulation_1d(*it1, clones_cam);
+    if (initializer_feat->config().triangulate_1d) {
+      success_tri = initializer_feat->single_triangulation_1d(*it1, clones_cam);
     } else {
-      success_tri = initializer_feat_->single_triangulation(*it1, clones_cam);
+      success_tri = initializer_feat->single_triangulation(*it1, clones_cam);
     }
 
     // Gauss-newton refine the feature
     bool success_refine = true;
-    if (initializer_feat_->config().refine_features) {
-      success_refine = initializer_feat_->single_gaussnewton(*it1, clones_cam);
+    if (initializer_feat->config().refine_features) {
+      success_refine = initializer_feat->single_gaussnewton(*it1, clones_cam);
     }
 
     // Remove the feature if not a success
@@ -234,14 +220,14 @@ void UpdaterSLAM::delayed_init(
     // Measurement noise matrix
     DataType sigma_pix_inv =
         ((int)feat.featid < state->options.max_aruco_features)
-            ? options_aruco_.sigma_pix_inv
-            : options_slam_.sigma_pix_inv;
+            ? options_aruco.sigma_pix_inv
+            : options_slam.sigma_pix_inv;
 
     // Try to initialize, delete new pointer if we failed
     DataType chi2_multipler =
         ((int)feat.featid < state->options.max_aruco_features)
-            ? options_aruco_.chi2_multipler
-            : options_slam_.chi2_multipler;
+            ? options_aruco.chi2_multipler
+            : options_slam.chi2_multipler;
     if (StateHelper::initialize(state, landmark, Hx_order, H_x, H_f, res,
                                 chi2_multipler, sigma_pix_inv)) {
       state->features_SLAM.insert({(*it2)->featid, landmark});
@@ -270,7 +256,8 @@ void UpdaterSLAM::delayed_init(
 
 void UpdaterSLAM::delayed_init_from_MSCKF(
     std::shared_ptr<State> state,
-    std::vector<std::shared_ptr<Feature>> &feature_vec) {
+    std::vector<std::shared_ptr<Feature>> &feature_vec,
+    const UpdaterOptions &options_slam, const UpdaterOptions &options_aruco) {
 
   // Return if no features
   if (feature_vec.empty())
@@ -328,8 +315,8 @@ void UpdaterSLAM::delayed_init_from_MSCKF(
     // Measurement noise matrix
     DataType sigma_pix_inv =
         ((int)feat.featid < state->options.max_aruco_features)
-            ? options_aruco_.sigma_pix_inv
-            : options_slam_.sigma_pix_inv;
+            ? options_aruco.sigma_pix_inv
+            : options_slam.sigma_pix_inv;
 
     StateHelper::initialize(state, landmark, Hx_order, H_x, H_f, res, -1,
                             sigma_pix_inv);
@@ -339,7 +326,18 @@ void UpdaterSLAM::delayed_init_from_MSCKF(
 }
 
 void UpdaterSLAM::update(std::shared_ptr<State> state,
-                         std::vector<std::shared_ptr<Feature>> &feature_vec) {
+                         std::vector<std::shared_ptr<Feature>> &feature_vec,
+                         const UpdaterOptions &options_slam,
+                         const UpdaterOptions &options_aruco) {
+
+  // Initialize the chi squared test table with confidence level 0.95
+  static std::map<int, float> chi_squared_table;
+  if (chi_squared_table.empty()) {
+    for (int i = 1; i < 500; i++) {
+      boost::math::chi_squared chi_squared_dist(i);
+      chi_squared_table[i] = boost::math::quantile(chi_squared_dist, 0.95);
+    }
+  }
 
   // Return if no features
   if (feature_vec.empty())
@@ -468,7 +466,7 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     for (const auto &var : Hxf_order) {
       RHTr.block(var->id(), 0, var->size(), 1).noalias() +=
           H_xf.block(0, local_id, H_xf.rows(), var->size()).transpose() * res *
-          options_slam_.sigma_pix_sq_inv;
+          options_slam.sigma_pix_sq_inv;
       local_id += var->size();
     }
     StateHelper::get_factors_for_slam_feature(state, Hxf_order, H_xf, HUT);
@@ -477,8 +475,8 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     MatX S = HUT * HUT.transpose();
     DataType sigma_pix_sq =
         ((int)feat.featid < state->options.max_aruco_features)
-            ? options_aruco_.sigma_pix_sq
-            : options_slam_.sigma_pix_sq;
+            ? options_aruco.sigma_pix_sq
+            : options_slam.sigma_pix_sq;
     S.diagonal() += sigma_pix_sq * VecX::Ones(S.rows());
     DataType chi2 = res.dot(S.llt().solve(res));
 
@@ -486,7 +484,7 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     // more)
     DataType chi2_check;
     if (res.rows() < 500) {
-      chi2_check = chi_squared_table_[res.rows()];
+      chi2_check = chi_squared_table[res.rows()];
     } else {
       boost::math::chi_squared chi_squared_dist(res.rows());
       chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
@@ -497,8 +495,8 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     // Check if we should delete or not
     DataType chi2_multipler =
         ((int)feat.featid < state->options.max_aruco_features)
-            ? options_aruco_.chi2_multipler
-            : options_slam_.chi2_multipler;
+            ? options_aruco.chi2_multipler
+            : options_slam.chi2_multipler;
     if (chi2 > chi2_multipler * chi2_check) {
       if ((int)feat.featid < state->options.max_aruco_features) {
         PRINT_WARNING(YELLOW "[SLAM-UP]: rejecting aruco tag %d for chi2 "
@@ -521,10 +519,10 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     }
 
     it2++;
-    state->store_update_factor(HUT * options_slam_.sigma_pix_inv, RHTr);
+    state->store_update_factor(HUT * options_slam.sigma_pix_inv, RHTr);
     if (!state->is_initialized) {
-      state->store_update_jacobians(H_xf * options_slam_.sigma_pix_inv,
-                                    res * options_slam_.sigma_pix_inv,
+      state->store_update_jacobians(H_xf * options_slam.sigma_pix_inv,
+                                    res * options_slam.sigma_pix_inv,
                                     Hxf_order);
     }
   }

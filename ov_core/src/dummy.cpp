@@ -39,8 +39,7 @@
  * ov_core codebase are the following:
  *
  * - 3d feature initialization (see @ref ov_core::FeatureInitializer)
- * - SE(3) b-spline (see @ref ov_core::BsplineSE3)
- * - KLT, descriptor, aruco, and simulation feature trackers
+ * - KLT, descriptor, and aruco feature trackers
  * - Groundtruth dataset reader (see @ref ov_core::DatasetReader)
  * - Quaternion and other manifold math operations
  * - Generic type system and their implementations (see @ref ov_type namespace)

@@ -24,6 +24,7 @@ include_directories(
 list(APPEND thirdparty_libraries
         ${Boost_LIBRARIES}
         ${OpenCV_LIBRARIES}
+        yaml-cpp
 )
 
 ##################################################
@@ -34,12 +35,10 @@ list(APPEND LIBRARY_SOURCES
         src/dummy.cpp
         src/cpi/CpiV1.cpp
         src/cpi/CpiV2.cpp
-        src/sim/BsplineSE3.cpp
         src/track/TrackBase.cpp
         src/track/TrackAruco.cpp
         src/track/TrackDescriptor.cpp
         src/track/TrackKLT.cpp
-        src/track/TrackSIM.cpp
         src/types/Landmark.cpp
         src/feat/Feature.cpp
         src/feat/FeatureDatabase.cpp
@@ -64,13 +63,13 @@ install(DIRECTORY src/
 # Make binary files!
 ##################################################
 
-add_executable(test_webcam src/test_webcam.cpp)
-target_link_libraries(test_webcam ov_core_lib ${thirdparty_libraries})
-install(TARGETS test_webcam
-        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
+# add_executable(test_webcam src/test_webcam.cpp)
+# target_link_libraries(test_webcam ov_core_lib ${thirdparty_libraries})
+# install(TARGETS test_webcam
+#         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#         LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#         RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
 
 add_executable(test_profile src/test_profile.cpp)
 target_link_libraries(test_profile ov_core_lib ${thirdparty_libraries})

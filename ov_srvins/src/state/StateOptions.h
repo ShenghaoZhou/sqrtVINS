@@ -31,7 +31,7 @@
 #define OV_SRVINS_STATE_OPTIONS_H
 
 #include "types/LandmarkRepresentation.h"
-#include "utils/opencv_yaml_parse.h"
+#include "utils/yaml_parse.h"
 #include "utils/print.h"
 
 #include <climits>

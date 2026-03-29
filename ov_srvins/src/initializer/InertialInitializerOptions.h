@@ -42,7 +42,7 @@
 #include "track/TrackBase.h"
 #include "types/LandmarkRepresentation.h"
 #include "utils/colors.h"
-#include "utils/opencv_yaml_parse.h"
+#include "utils/yaml_parse.h"
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
@@ -202,50 +202,7 @@ struct InertialInitializerOptions {
   /// Map between camid and camera extrinsics (q_ItoC, p_IinC).
   std::map<size_t, VecX> camera_extrinsics;
 
-  // SIMULATOR ===============================
 
-  /// Seed for initial states (i.e. random feature 3d positions in the generated
-  /// map)
-  int sim_seed_state_init = 0;
-
-  /// Seed for calibration perturbations. Change this to perturb by different
-  /// random values if perturbations are enabled.
-  int sim_seed_preturb = 0;
-
-  /// Measurement noise seed. This should be incremented for each run in the
-  /// Monte-Carlo simulation to generate the same true measurements, but
-  /// diffferent noise values.
-  int sim_seed_measurements = 0;
-
-  /// If we should perturb the calibration that the estimator starts with
-  bool sim_do_perturbation = false;
-
-  /// Path to the trajectory we will b-spline and simulate on. Should be
-  /// time(s),pos(xyz),ori(xyzw) format.
-  std::string sim_traj_path = "../ov_data/sim/udel_gore.txt";
-
-  /// We will start simulating after we have moved this much along the b-spline.
-  /// This prevents static starts as we init from groundtruth in simulation.
-  double sim_distance_threshold = 1.2;
-
-  /// Frequency (Hz) that we will simulate our cameras
-  double sim_freq_cam = 10.0;
-
-  /// Frequency (Hz) that we will simulate our inertial measurement unit
-  double sim_freq_imu = 400.0;
-
-  /// Feature distance we generate features from (minimum)
-  double sim_min_feature_gen_distance = 5;
-
-  /// Feature distance we generate features from (maximum)
-  double sim_max_feature_gen_distance = 10;
-
-  // large pertubation error
-  double sim_fisheye_min2center = 20;
-
-  // large distort and undistort error, and make the simulation only has
-  // features at the edge (too large fov!)
-  double sim_fisheye_max2center = 200;
 
   /**
    * @brief This function will load the non-simulation parameters of the system
@@ -274,15 +231,7 @@ struct InertialInitializerOptions {
   void
   print_and_load_noise(std::shared_ptr<ov_core::YamlParser> parser = nullptr);
 
-  /**
-   * @brief This function will load print out all simulated parameters.
-   * This allows for visual checking that everything was loaded properly from
-   * ROS/CMD parsers.
-   *
-   * @param parser If not null, this parser will be used to load our parameters
-   */
-  void print_and_load_simulation(
-      std::shared_ptr<ov_core::YamlParser> parser = nullptr);
+
 
   /**
    * @brief This function will load and print all state parameters (e.g. sensor

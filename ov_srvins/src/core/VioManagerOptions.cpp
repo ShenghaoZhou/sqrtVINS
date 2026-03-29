@@ -51,7 +51,7 @@
 #include "track/TrackBase.h"
 #include "utils/DataType.h"
 #include "utils/colors.h"
-#include "utils/opencv_yaml_parse.h"
+#include "utils/yaml_parse.h"
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
@@ -334,34 +334,5 @@ void VioManagerOptions::print_and_load_trackers(
   featinit_options.print(parser);
 }
 
-void VioManagerOptions::print_and_load_simulation(
-    std::shared_ptr<ov_core::YamlParser> parser) {
-  if (parser != nullptr) {
-    parser->parse_config("sim_seed_state_init", sim_seed_state_init);
-    parser->parse_config("sim_seed_preturb", sim_seed_preturb);
-    parser->parse_config("sim_seed_measurements", sim_seed_measurements);
-    parser->parse_config("sim_do_perturbation", sim_do_perturbation);
-    parser->parse_config("sim_traj_path", sim_traj_path);
-    parser->parse_config("sim_distance_threshold", sim_distance_threshold);
-    parser->parse_config("sim_freq_cam", sim_freq_cam);
-    parser->parse_config("sim_freq_imu", sim_freq_imu);
-    parser->parse_config("sim_min_feature_gen_dist",
-                         sim_min_feature_gen_distance);
-    parser->parse_config("sim_max_feature_gen_dist",
-                         sim_max_feature_gen_distance);
-  }
-  PRINT_DEBUG("SIMULATION PARAMETERS:\n");
-  PRINT_WARNING(BOLDRED "  - state init seed: %d \n" RESET,
-                sim_seed_state_init);
-  PRINT_WARNING(BOLDRED "  - perturb seed: %d \n" RESET, sim_seed_preturb);
-  PRINT_WARNING(BOLDRED "  - measurement seed: %d \n" RESET,
-                sim_seed_measurements);
-  PRINT_WARNING(BOLDRED "  - do perturb?: %d\n" RESET, sim_do_perturbation);
-  PRINT_DEBUG("  - traj path: %s\n", sim_traj_path.c_str());
-  PRINT_DEBUG("  - dist thresh: %.2f\n", sim_distance_threshold);
-  PRINT_DEBUG("  - cam feq: %.2f\n", sim_freq_cam);
-  PRINT_DEBUG("  - imu feq: %.2f\n", sim_freq_imu);
-  PRINT_DEBUG("  - min feat dist: %.2f\n", sim_min_feature_gen_distance);
-  PRINT_DEBUG("  - max feat dist: %.2f\n", sim_max_feature_gen_distance);
-}
+
 }; // namespace ov_srvins

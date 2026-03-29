@@ -51,7 +51,7 @@
 #include "track/TrackBase.h"
 #include "utils/DataType.h"
 #include "utils/colors.h"
-#include "utils/opencv_yaml_parse.h"
+#include "utils/yaml_parse.h"
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
@@ -113,15 +113,7 @@ struct VioManagerOptions {
   void print_and_load_trackers(
       std::shared_ptr<ov_core::YamlParser> parser = nullptr);
 
-  /**
-   * @brief This function will load print out all simulated parameters.
-   * This allows for visual checking that everything was loaded properly from
-   * ROS/CMD parsers.
-   *
-   * @param parser If not null, this parser will be used to load our parameters
-   */
-  void print_and_load_simulation(
-      std::shared_ptr<ov_core::YamlParser> parser = nullptr);
+
 
   // ESTIMATOR ===============================
   /// Core state options (e.g. number of cameras, use fej, stereo, what
@@ -262,43 +254,6 @@ struct VioManagerOptions {
   /// Parameters used by our feature initialize / triangulator
   ov_core::FeatureInitializerOptions featinit_options;
 
-  // SIMULATOR ===============================
-
-  /// Seed for initial states (i.e. random feature 3d positions in the generated
-  /// map)
-  int sim_seed_state_init = 0;
-
-  /// Seed for calibration perturbations. Change this to perturb by different
-  /// random values if perturbations are enabled.
-  int sim_seed_preturb = 0;
-
-  /// Measurement noise seed. This should be incremented for each run in the
-  /// Monte-Carlo simulation to generate the same true measurements, but
-  /// diffferent noise values.
-  int sim_seed_measurements = 0;
-
-  /// If we should perturb the calibration that the estimator starts with
-  bool sim_do_perturbation = false;
-
-  /// Path to the trajectory we will b-spline and simulate on. Should be
-  /// time(s),pos(xyz),ori(xyzw) format.
-  std::string sim_traj_path = "src/open_vins/ov_data/sim/udel_gore.txt";
-
-  /// We will start simulating after we have moved this much along the b-spline.
-  /// This prevents static starts as we init from groundtruth in simulation.
-  DataType sim_distance_threshold = 1.2;
-
-  /// Frequency (Hz) that we will simulate our cameras
-  DataType sim_freq_cam = 10.0;
-
-  /// Frequency (Hz) that we will simulate our inertial measurement unit
-  DataType sim_freq_imu = 400.0;
-
-  /// Feature distance we generate features from (minimum)
-  DataType sim_min_feature_gen_distance = 5;
-
-  /// Feature distance we generate features from (maximum)
-  DataType sim_max_feature_gen_distance = 10;
 };
 
 } // namespace ov_srvins

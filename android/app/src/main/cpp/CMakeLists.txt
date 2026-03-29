@@ -9,8 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Enable optimizations
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fno-signed-zeros -fno-math-errno -funroll-loops")
 
-# Define ROS_AVAILABLE as 0
-add_definitions(-DROS_AVAILABLE=0)
+# ROS support has been removed from the repository.
 
 # Set path to the root of the project
 set(SRCDIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../)
@@ -22,6 +21,12 @@ set(SRCDIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../)
 find_package(OpenCV REQUIRED)
 message(STATUS "OpenCV found at: ${OpenCV_DIR}")
 include_directories(${OpenCV_INCLUDE_DIRS})
+
+# -----------------------------------------------------------------
+# 1.5 Yaml-cpp (assuming it's installed or provided)
+# -----------------------------------------------------------------
+find_package(yaml-cpp REQUIRED)
+include_directories(${yaml-cpp_INCLUDE_DIRS})
 
 # -----------------------------------------------------------------
 # 2. Eigen for Android
@@ -61,6 +66,7 @@ add_library(sqrt_vins_native SHARED
 # Link libraries
 target_link_libraries(sqrt_vins_native
         ${OpenCV_LIBRARIES}
+        yaml-cpp
         log # Android log library
         android
 )

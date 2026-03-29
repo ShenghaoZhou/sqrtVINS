@@ -90,23 +90,9 @@ public:
     track_image_and_update(message);
   }
 
-  /**
-   * @brief Feed function for a synchronized simulated cameras
-   * @param timestamp Time that this image was collected
-   * @param camids Camera ids that we have simulated measurements for
-   * @param feats Raw uv simulated measurements
-   */
-  void feed_measurement_simulation(
-      double timestamp, const std::vector<int> &camids,
-      const std::vector<std::vector<std::pair<size_t, Eigen::Vector2f>>>
-          &feats);
 
-  /**
-   * @brief Given a state, this will initialize our IMU state.
-   * @param imustate State in the MSCKF ordering:
-   * [time(sec),q_GtoI,p_IinG,v_IinG,b_gyro,b_accel]
-   */
-  void initialize_with_gt(Eigen::Matrix<double, 17, 1> imustate);
+
+
 
   /// If we are initialized or not
   bool initialized() { return is_initialized_vio; }

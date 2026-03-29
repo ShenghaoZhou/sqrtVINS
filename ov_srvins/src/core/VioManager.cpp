@@ -32,7 +32,7 @@
 #include "track/TrackAruco.h"
 #include "track/TrackDescriptor.h"
 #include "track/TrackKLT.h"
-#include "track/TrackSIM.h"
+
 #include "types/Landmark.h"
 #include "types/LandmarkRepresentation.h"
 #include "utils/DataType.h"
@@ -269,87 +269,7 @@ void VioManager::track_image_and_update(
   do_feature_propagate_update(message);
 }
 
-void VioManager::feed_measurement_simulation(
-    double timestamp, const std::vector<int> &camids,
-    const std::vector<std::vector<std::pair<size_t, Eigen::Vector2f>>> &feats) {
 
-  // Start timing
-  rT1 = std::chrono::steady_clock::now();
-
-  // Check if we actually have a simulated tracker
-  // If not, recreate and re-cast the tracker to our simulation tracker
-  std::shared_ptr<TrackSIM> trackSIM =
-      std::dynamic_pointer_cast<TrackSIM>(trackFEATS);
-  if (trackSIM == nullptr) {
-    // Replace with the simulated tracker
-    trackSIM = std::make_shared<TrackSIM>(state->cam_intrinsics_cameras,
-                                          state->options.max_aruco_features);
-    trackFEATS = trackSIM;
-    // Need to also replace it in init and zv-upt since it points to the
-    // trackFEATS db pointer
-    initializer = std::make_shared<ov_srvins::InertialInitializer>(
-        params.init_options, trackFEATS->get_feature_database(), propagator,
-        params.msckf_options, params.slam_options, params.featinit_options);
-    if (params.try_zupt) {
-      updaterZUPT = std::make_shared<UpdaterZeroVelocity>(
-          params.zupt_options, params.imu_noises,
-          trackFEATS->get_feature_database(), propagator, params.gravity_mag,
-          params.zupt_max_velocity, params.zupt_noise_multiplier,
-          params.zupt_max_disparity);
-    }
-    PRINT_WARNING(RED
-                  "[SIM]: casting our tracker to a TrackSIM object!\n" RESET);
-  }
-
-  // Feed our simulation tracker
-  trackSIM->feed_measurement_simulation(timestamp, camids, feats);
-  rT2 = std::chrono::steady_clock::now();
-
-  // Check if we should do zero-velocity, if so update the state with it
-  // Note that in the case that we only use in the beginning initialization
-  // phase If we have since moved, then we should never try to do a zero
-  // velocity update! If we have SLAM features, no need to use zero velocity
-  // updates
-  if (is_initialized_vio && updaterZUPT != nullptr &&
-      (!params.zupt_only_at_beginning || !has_moved_since_zupt) &&
-      state->features_SLAM.empty()) {
-    // If the same state time, use the previous timestep decision
-    if (state->timestamp != timestamp) {
-      state->setup_matrix_buffer();
-      did_zupt_update = updaterZUPT->try_update(state, timestamp);
-    }
-    if (did_zupt_update) {
-      assert(state->timestamp == timestamp);
-      propagator->clean_old_imu_measurements(
-          timestamp + state->calib_dt_CAMtoIMU->value()(0) - 0.10);
-      updaterZUPT->clean_old_imu_measurements(
-          timestamp + state->calib_dt_CAMtoIMU->value()(0) - 0.10);
-      return;
-    }
-  }
-
-  // If we do not have VIO initialization, then return an error
-  if (!is_initialized_vio) {
-    PRINT_ERROR(RED "[SIM]: your vio system should already be initialized "
-                    "before simulating features!!!\n" RESET);
-    PRINT_ERROR(RED "[SIM]: initialize your system first before calling "
-                    "feed_measurement_simulation()!!!!\n" RESET);
-    std::exit(EXIT_FAILURE);
-  }
-
-  // Call on our propagate and update function
-  // Simulation is either all sync, or single camera...
-  ov_core::CameraData message;
-  message.timestamp = timestamp;
-  for (auto const &camid : camids) {
-    int width = state->cam_intrinsics_cameras.at(camid)->w();
-    int height = state->cam_intrinsics_cameras.at(camid)->h();
-    message.sensor_ids.push_back(camid);
-    message.images.push_back(cv::Mat::zeros(cv::Size(width, height), CV_8UC1));
-    message.masks.push_back(cv::Mat::zeros(cv::Size(width, height), CV_8UC1));
-  }
-  do_feature_propagate_update(message);
-}
 
 bool VioManager::propagate_state(double timestamp) {
   // Return if the camera measurement is out of order
@@ -626,48 +546,7 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   }
 }
 
-void VioManager::initialize_with_gt(Eigen::Matrix<double, 17, 1> imustate) {
 
-  // Initialize the system
-  state->imu->set_value(imustate.block(1, 0, 16, 1).cast<DataType>());
-  state->imu->set_fej(imustate.block(1, 0, 16, 1).cast<DataType>());
-
-  // Fix the global yaw and position gauge freedoms
-  // TODO: Why does this break out simulation consistency metrics?
-  std::vector<std::shared_ptr<ov_type::Type>> order = {state->imu};
-  MatX diagonal = 0.02 * MatX::Identity(state->imu->size(), state->imu->size());
-  diagonal.topRows<3>() = 0.017 * Vec3::Ones();    // q
-  diagonal.middleRows<3>(3) = 0.05 * Vec3::Ones(); // p
-  diagonal.middleRows<3>(6) = 0.01 * Vec3::Ones(); // v (static)
-  StateHelper::set_initial_imu_square_root_covariance(state, diagonal);
-
-  // Set the state time
-  state->update_timestamp(imustate(0, 0));
-  startup_time = imustate(0, 0);
-  is_initialized_vio = true;
-
-  // Cleanup any features older then the initialization time
-  trackFEATS->get_feature_database()->cleanup_measurements(state->timestamp);
-  if (trackARUCO != nullptr) {
-    trackARUCO->get_feature_database()->cleanup_measurements(state->timestamp);
-  }
-
-  // Print what we init'ed with
-  PRINT_DEBUG(GREEN "[INIT]: INITIALIZED FROM GROUNDTRUTH FILE!!!!!\n" RESET);
-  PRINT_DEBUG(GREEN "[INIT]: orientation = %.4f, %.4f, %.4f, %.4f\n" RESET,
-              state->imu->quat()(0), state->imu->quat()(1),
-              state->imu->quat()(2), state->imu->quat()(3));
-  PRINT_DEBUG(GREEN "[INIT]: bias gyro = %.4f, %.4f, %.4f\n" RESET,
-              state->imu->bias_g()(0), state->imu->bias_g()(1),
-              state->imu->bias_g()(2));
-  PRINT_DEBUG(GREEN "[INIT]: velocity = %.4f, %.4f, %.4f\n" RESET,
-              state->imu->vel()(0), state->imu->vel()(1), state->imu->vel()(2));
-  PRINT_DEBUG(GREEN "[INIT]: bias accel = %.4f, %.4f, %.4f\n" RESET,
-              state->imu->bias_a()(0), state->imu->bias_a()(1),
-              state->imu->bias_a()(2));
-  PRINT_DEBUG(GREEN "[INIT]: position = %.4f, %.4f, %.4f\n" RESET,
-              state->imu->pos()(0), state->imu->pos()(1), state->imu->pos()(2));
-}
 
 bool VioManager::try_to_initialize(const ov_core::CameraData &message) {
 

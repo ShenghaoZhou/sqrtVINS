@@ -10,7 +10,9 @@ if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 REQUIRED)
 endif()
 
+find_package(yaml-cpp REQUIRED)
 message(STATUS "OPENCV: " ${OpenCV_VERSION})
+message(STATUS "YAML-CPP: " ${yaml-cpp_VERSION})
 
 # If we will compile with aruco support
 option(ENABLE_ARUCO_TAGS "Enable or disable aruco tag (disable if no contrib modules)" ON)
@@ -41,19 +43,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fsee -fomit-frame-pointer -fno-sign
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -Wall -Wuninitialized -fno-omit-frame-pointer -ffp-contract=off -march=native -fno-inline-functions -fno-inline-small-functions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -Wall -Wuninitialized -fno-omit-frame-pointer")
 
-# Find our ROS version!
-# NOTE: Default to using the ROS1 package if both are in our enviroment
-# NOTE: https://github.com/romainreignier/share_ros1_ros2_lib_demo
-find_package(catkin QUIET COMPONENTS roscpp)
-find_package(ament_cmake QUIET)
-
-if(catkin_FOUND)
-    message(STATUS "ROS *1* version found, building ROS1.cmake")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ROS1.cmake)
-elseif(ament_cmake_FOUND)
-    message(STATUS "ROS *2* version found, building ROS2.cmake")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ROS2.cmake)
-else()
-    message(STATUS "No ROS versions found, building NO_ROS.cmake")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NO_ROS.cmake)
-endif()
+# Build without ROS
+message(STATUS "Building without ROS support (NO_ROS.cmake)")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NO_ROS.cmake)

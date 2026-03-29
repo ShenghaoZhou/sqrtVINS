@@ -80,7 +80,7 @@ void TrackDescriptor::feed_new_camera(const CameraData &message) {
 void TrackDescriptor::feed_monocular(const CameraData &message, size_t msg_id) {
 
   // Start timing
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // Lock this data feed for this camera
   size_t cam_id = message.sensor_ids.at(msg_id);
@@ -124,7 +124,7 @@ void TrackDescriptor::feed_monocular(const CameraData &message, size_t msg_id) {
 
   // First, extract new descriptors for this new image
   perform_detection_monocular(img, mask, pts_new, desc_new, ids_new);
-  rT2 = boost::posix_time::microsec_clock::local_time();
+  rT2 = std::chrono::steady_clock::now();
 
   // Our matches temporally
   std::vector<cv::DMatch> matches_ll;
@@ -132,7 +132,7 @@ void TrackDescriptor::feed_monocular(const CameraData &message, size_t msg_id) {
   // Lets match temporally
   robust_match(pts_last[cam_id], pts_new, desc_last[cam_id], desc_new, cam_id,
                cam_id, matches_ll);
-  rT3 = boost::posix_time::microsec_clock::local_time();
+  rT3 = std::chrono::steady_clock::now();
 
   // Get our "good tracks"
   std::vector<cv::KeyPoint> good_left;
@@ -167,7 +167,7 @@ void TrackDescriptor::feed_monocular(const CameraData &message, size_t msg_id) {
       good_ids_left.push_back(ids_new[i]);
     }
   }
-  rT4 = boost::posix_time::microsec_clock::local_time();
+  rT4 = std::chrono::steady_clock::now();
 
   // Update our feature database, with theses new observations
   for (size_t i = 0; i < good_left.size(); i++) {
@@ -190,26 +190,26 @@ void TrackDescriptor::feed_monocular(const CameraData &message, size_t msg_id) {
     ids_last[cam_id] = good_ids_left;
     desc_last[cam_id] = good_desc_left;
   }
-  rT5 = boost::posix_time::microsec_clock::local_time();
+  rT5 = std::chrono::steady_clock::now();
 
   // Our timing information
   PRINT_ALL("[TIME-DESC]: %.4f seconds for detection\n",
-            (rT2 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT2 - rT1).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for matching\n",
-            (rT3 - rT2).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT3 - rT2).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for merging\n",
-            (rT4 - rT3).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT4 - rT3).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for feature DB update (%d features)\n",
-            (rT5 - rT4).total_microseconds() * 1e-6, (int)good_left.size());
+            std::chrono::duration_cast<std::chrono::microseconds>(rT5 - rT4).count() * 1e-6, (int)good_left.size());
   PRINT_ALL("[TIME-DESC]: %.4f seconds for total\n",
-            (rT5 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT5 - rT1).count() * 1e-6);
 }
 
 void TrackDescriptor::feed_stereo(const CameraData &message, size_t msg_id_left,
                                   size_t msg_id_right) {
 
   // Start timing
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // Lock this data feed for this camera
   size_t cam_id_left = message.sensor_ids.at(msg_id_left);
@@ -266,10 +266,10 @@ void TrackDescriptor::feed_stereo(const CameraData &message, size_t msg_id_left,
 
   // First, extract new descriptors for this new image
   perform_detection_stereo(img_left, img_right, mask_left, mask_right,
-                           pts_left_new, pts_right_new, desc_left_new,
-                           desc_right_new, cam_id_left, cam_id_right,
-                           ids_left_new, ids_right_new);
-  rT2 = boost::posix_time::microsec_clock::local_time();
+                            pts_left_new, pts_right_new, desc_left_new,
+                            desc_right_new, cam_id_left, cam_id_right,
+                            ids_left_new, ids_right_new);
+  rT2 = std::chrono::steady_clock::now();
 
   // Our matches temporally
   std::vector<cv::DMatch> matches_ll, matches_rr;
@@ -286,7 +286,7 @@ void TrackDescriptor::feed_stereo(const CameraData &message, size_t msg_id_left,
                         is_left ? matches_ll : matches_rr);
                   }
                 }));
-  rT3 = boost::posix_time::microsec_clock::local_time();
+  rT3 = std::chrono::steady_clock::now();
 
   // Get our "good tracks"
   std::vector<cv::KeyPoint> good_left, good_right;
@@ -344,7 +344,7 @@ void TrackDescriptor::feed_stereo(const CameraData &message, size_t msg_id_left,
       good_ids_right.push_back(ids_left_new[i]);
     }
   }
-  rT4 = boost::posix_time::microsec_clock::local_time();
+  rT4 = std::chrono::steady_clock::now();
 
   //===================================================================================
   //===================================================================================
@@ -386,19 +386,19 @@ void TrackDescriptor::feed_stereo(const CameraData &message, size_t msg_id_left,
     desc_last[cam_id_left] = good_desc_left;
     desc_last[cam_id_right] = good_desc_right;
   }
-  rT5 = boost::posix_time::microsec_clock::local_time();
+  rT5 = std::chrono::steady_clock::now();
 
   // Our timing information
   PRINT_ALL("[TIME-DESC]: %.4f seconds for detection\n",
-            (rT2 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT2 - rT1).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for matching\n",
-            (rT3 - rT2).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT3 - rT2).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for merging\n",
-            (rT4 - rT3).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT4 - rT3).count() * 1e-6);
   PRINT_ALL("[TIME-DESC]: %.4f seconds for feature DB update (%d features)\n",
-            (rT5 - rT4).total_microseconds() * 1e-6, (int)good_left.size());
+            std::chrono::duration_cast<std::chrono::microseconds>(rT5 - rT4).count() * 1e-6, (int)good_left.size());
   PRINT_ALL("[TIME-DESC]: %.4f seconds for total\n",
-            (rT5 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration_cast<std::chrono::microseconds>(rT5 - rT1).count() * 1e-6);
 }
 
 void TrackDescriptor::perform_detection_monocular(

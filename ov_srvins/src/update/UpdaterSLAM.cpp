@@ -39,8 +39,7 @@
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/math/distributions/chi_squared.hpp>
+#include <chrono>
 
 using namespace ov_core;
 using namespace ov_type;
@@ -63,8 +62,8 @@ void UpdaterSLAM::delayed_init(
     return;
 
   // Start timing
-  boost::posix_time::ptime rT0, rT1, rT2, rT3;
-  rT0 = boost::posix_time::microsec_clock::local_time();
+  std::chrono::steady_clock::time_point rT0, rT1, rT2, rT3;
+  rT0 = std::chrono::steady_clock::now();
 
   // 0. Get all timestamps our clones are at (and thus valid measurement times)
   std::vector<double> clonetimes;
@@ -96,7 +95,7 @@ void UpdaterSLAM::delayed_init(
       it0++;
     }
   }
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // 2. Create vector of cloned *CAMERA* poses at each of our clone timesteps
   std::unordered_map<size_t,
@@ -152,7 +151,7 @@ void UpdaterSLAM::delayed_init(
     }
     it1++;
   }
-  rT2 = boost::posix_time::microsec_clock::local_time();
+  rT2 = std::chrono::steady_clock::now();
 
   // 4. Compute linear system for each feature, nullspace project, and reject
   auto it2 = feature_vec.begin();
@@ -239,18 +238,18 @@ void UpdaterSLAM::delayed_init(
       it2 = feature_vec.erase(it2);
     }
   }
-  rT3 = boost::posix_time::microsec_clock::local_time();
+  rT3 = std::chrono::steady_clock::now();
 
   // Debug print timing information
   if (!feature_vec.empty()) {
     PRINT_ALL("[SLAM-DELAY]: %.4f seconds to clean\n",
-              (rT1 - rT0).total_microseconds() * 1e-6);
+              std::chrono::duration<double>(rT1 - rT0).count());
     PRINT_ALL("[SLAM-DELAY]: %.4f seconds to triangulate\n",
-              (rT2 - rT1).total_microseconds() * 1e-6);
+              std::chrono::duration<double>(rT2 - rT1).count());
     PRINT_ALL("[SLAM-DELAY]: %.4f seconds initialize (%d features)\n",
-              (rT3 - rT2).total_microseconds() * 1e-6, (int)feature_vec.size());
+              std::chrono::duration<double>(rT3 - rT2).count(), (int)feature_vec.size());
     PRINT_ALL("[SLAM-DELAY]: %.4f seconds total\n",
-              (rT3 - rT1).total_microseconds() * 1e-6);
+              std::chrono::duration<double>(rT3 - rT1).count());
   }
 }
 
@@ -334,9 +333,16 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
   static std::map<int, float> chi_squared_table;
   if (chi_squared_table.empty()) {
     for (int i = 1; i < 500; i++) {
-      boost::math::chi_squared chi_squared_dist(i);
-      chi_squared_table[i] = boost::math::quantile(chi_squared_dist, 0.95);
+      // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+      double k = (double)i;
+      chi_squared_table[i] = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
     }
+    // Hardcode some small values for better precision
+    chi_squared_table[1] = 3.841;
+    chi_squared_table[2] = 5.991;
+    chi_squared_table[3] = 7.815;
+    chi_squared_table[4] = 9.488;
+    chi_squared_table[5] = 11.070;
   }
 
   // Return if no features
@@ -344,8 +350,8 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     return;
 
   // Start timing
-  boost::posix_time::ptime rT0, rT1, rT2, rT3;
-  rT0 = boost::posix_time::microsec_clock::local_time();
+  std::chrono::steady_clock::time_point rT0, rT1, rT2, rT3;
+  rT0 = std::chrono::steady_clock::now();
 
   // 0. Get all timestamps our clones are at (and thus valid measurement times)
   std::vector<double> clonetimes;
@@ -381,7 +387,7 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
       it0++;
     }
   }
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // Calculate the max possible measurement size
   size_t max_meas_size = 0;
@@ -486,8 +492,9 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     if (res.rows() < 500) {
       chi2_check = chi_squared_table[res.rows()];
     } else {
-      boost::math::chi_squared chi_squared_dist(res.rows());
-      chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
+      // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+      double k = (double)res.rows();
+      chi2_check = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
       PRINT_WARNING(YELLOW "chi2_check over the residual limit - %d\n" RESET,
                     (int)res.rows());
     }
@@ -527,7 +534,7 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     }
   }
 
-  rT2 = boost::posix_time::microsec_clock::local_time();
+  rT2 = std::chrono::steady_clock::now();
 
   // We have appended all features to our Hx_big, res_big
   // Delete it so we do not reuse information
@@ -535,18 +542,18 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
     feature_vec[f]->to_delete = true;
   }
 
-  rT3 = boost::posix_time::microsec_clock::local_time();
+  rT3 = std::chrono::steady_clock::now();
 
   // Debug print timing information
   PRINT_ALL("[SLAM-UP]: %.4f seconds to clean\n",
-            (rT1 - rT0).total_microseconds() * 1e-6);
+            std::chrono::duration<double>(rT1 - rT0).count());
   PRINT_ALL("[SLAM-UP]: %.4f seconds creating linear system\n",
-            (rT2 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration<double>(rT2 - rT1).count());
   PRINT_ALL("[SLAM-UP]: %.4f seconds to update (%d feats of %d size)\n",
-            (rT3 - rT2).total_microseconds() * 1e-6, (int)feature_vec.size(),
-            max_meas_size);
+            std::chrono::duration<double>(rT3 - rT2).count(), (int)feature_vec.size(),
+            (int)max_meas_size);
   PRINT_ALL("[SLAM-UP]: %.4f seconds total\n",
-            (rT3 - rT1).total_microseconds() * 1e-6);
+            std::chrono::duration<double>(rT3 - rT1).count());
 }
 
 void UpdaterSLAM::change_anchors(std::shared_ptr<State> state) {

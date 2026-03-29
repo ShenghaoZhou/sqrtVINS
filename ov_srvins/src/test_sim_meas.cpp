@@ -35,9 +35,6 @@
 #include <unistd.h>
 #include <vector>
 
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/filesystem.hpp>
-
 #if ROS_AVAILABLE == 1
 #include <ros/ros.h>
 #endif

@@ -237,7 +237,7 @@ public:
       cam_intrinsics_cameras;
 
   /// Timer used to record matrix factorization time
-  boost::posix_time::ptime rT81, rT82;
+  std::chrono::steady_clock::time_point rT81, rT82;
 
   /// Buffer for camera poses (non-fej and fej) to avoid recalculation
   CameraPoseBuffer cam_pose_buffer;

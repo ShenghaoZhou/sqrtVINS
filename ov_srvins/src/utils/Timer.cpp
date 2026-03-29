@@ -27,7 +27,7 @@
 
 
 #include "Timer.h"
-#include <boost/date_time/posix_time/posix_time.hpp>
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -35,15 +35,15 @@
 namespace ov_srvins {
 
 void Timer::tic() {
-  time_start_ = boost::posix_time::microsec_clock::local_time();
+  time_start_ = std::chrono::steady_clock::now();
 }
 
 void Timer::toc(const std::string &func_name, bool output) {
-  time_end_ = boost::posix_time::microsec_clock::local_time();
-  duration_ += (time_end_ - time_start_).total_microseconds() * 1e-3;
+  time_end_ = std::chrono::steady_clock::now();
+  double dt = std::chrono::duration_cast<std::chrono::microseconds>(time_end_ - time_start_).count() * 1e-3;
+  duration_ += dt;
   if (output) {
-    std::cout << func_name << " takes " << std::setprecision(5)
-              << (time_end_ - time_start_).total_microseconds() * 1e-3 << " ms"
+    std::cout << func_name << " takes " << std::setprecision(5) << dt << " ms"
               << std::endl;
   }
 }

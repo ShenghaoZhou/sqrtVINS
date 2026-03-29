@@ -32,6 +32,7 @@
 #include "cam/CamBase.h"
 #include "cam/CamEqui.h"
 #include "cam/CamRadtan.h"
+#include <unistd.h>
 #include "sim/BsplineSE3.h"
 #include "utils/colors.h"
 #include "utils/dataset_reader.h"

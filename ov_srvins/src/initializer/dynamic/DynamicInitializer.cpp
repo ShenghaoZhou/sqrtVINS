@@ -41,6 +41,7 @@
 #include "utils/quat_ops.h"
 #include "utils/sensor_data.h"
 #include <fstream>
+#include <chrono>
 
 #include "Solver.h"
 
@@ -63,7 +64,7 @@ DynamicInitializer::DynamicInitializer(
 bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
 
   // Get the newest and oldest timestamps we will try to initialize between!
-  auto rT1 = boost::posix_time::microsec_clock::local_time();
+  auto rT1 = std::chrono::steady_clock::now();
 
   // Make sure we have IMU reading before the oldest time
   std::vector<ov_core::ImuData> imu_data;
@@ -152,7 +153,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
   PRINT_DEBUG("[init-d]: |theta_I| = %.4f deg and |accel| = %.4f\n",
               180.0 / M_PI * theta_inI_norm, accel_inI_norm);
 
-  auto rT2 = boost::posix_time::microsec_clock::local_time();
+  auto rT2 = std::chrono::steady_clock::now();
 
   // ======================================================
   // Preintegration
@@ -163,7 +164,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
     return false;
   }
 
-  auto rT3 = boost::posix_time::microsec_clock::local_time();
+  auto rT3 = std::chrono::steady_clock::now();
 
   // ======================================================
   // Gyro bias estimator
@@ -199,7 +200,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
     }
   }
 
-  auto rT4 = boost::posix_time::microsec_clock::local_time();
+  auto rT4 = std::chrono::steady_clock::now();
 
   // ======================================================
   // Find translation directions
@@ -294,7 +295,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
     }
   }
 
-  auto rT5 = boost::posix_time::microsec_clock::local_time();
+  auto rT5 = std::chrono::steady_clock::now();
 
   // ======================================================
   // Create linear system and solve it!
@@ -305,7 +306,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
 
   build_linear_system(map_camera_cpi_I0toIi, id_to_eigenvectors, id_to_timepair,
                       id_to_campair, A, b, x_init);
-  auto rT6 = boost::posix_time::microsec_clock::local_time();
+  auto rT6 = std::chrono::steady_clock::now();
 
   // ======================================================
   // Gravity refinement
@@ -315,7 +316,7 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
     PRINT_WARNING(RED "[init-d]: gravity did not converge\n" RESET);
     return false;
   }
-  auto rT7 = boost::posix_time::microsec_clock::local_time();
+  auto rT7 = std::chrono::steady_clock::now();
 
   Vec3 v_I0inI0 = x_refined.topRows<3>();
   Vec3 gravity_inI0 = x_refined.bottomRows<3>();
@@ -364,23 +365,23 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
   }
 
   // Debug timing information about how long it took to initialize!!
-  auto rT8 = boost::posix_time::microsec_clock::local_time();
+  auto rT8 = std::chrono::steady_clock::now();
   PRINT_DEBUG("[TIME]: %.2f ms for prelim tests\n",
-              (rT2 - rT1).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT2 - rT1).count());
   PRINT_DEBUG("[TIME]: %.2f ms for preintegration\n",
-              (rT3 - rT2).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT3 - rT2).count());
   PRINT_DEBUG("[TIME]: %.2f ms for bg estimation\n",
-              (rT4 - rT3).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT4 - rT3).count());
   PRINT_DEBUG("[TIME]: %.2f ms for rotation-only\n",
-              (rT5 - rT4).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT5 - rT4).count());
   PRINT_DEBUG("[TIME]: %.2f ms for linsys\n",
-              (rT6 - rT5).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT6 - rT5).count());
   PRINT_DEBUG("[TIME]: %.2f ms for graivty refinement\n",
-              (rT7 - rT6).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT7 - rT6).count());
   PRINT_DEBUG("[TIME]: %.2f ms for srf + cov recovery\n",
-              (rT8 - rT7).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT8 - rT7).count());
   PRINT_DEBUG("[TIME]: %.2f ms total for initialization\n",
-              (rT8 - rT1).total_microseconds() * 1e-3);
+              std::chrono::duration<double, std::milli>(rT8 - rT1).count());
 
   // Logger
   // Write the output of initialization window to file for evaluation
@@ -449,21 +450,21 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
     outfile << "start_time: " << state->timestamp << std::endl;
     outfile.precision(6);
     outfile << "vel: " << state->imu->vel().transpose() << std::endl;
-    outfile << "time_pre_test: " << (rT2 - rT1).total_microseconds() * 1e-3
+    outfile << "time_pre_test: " << std::chrono::duration<double, std::milli>(rT2 - rT1).count()
             << std::endl;
-    outfile << "time_preint: " << (rT3 - rT2).total_microseconds() * 1e-3
+    outfile << "time_preint: " << std::chrono::duration<double, std::milli>(rT3 - rT2).count()
             << std::endl;
-    outfile << "time_bg: " << (rT4 - rT3).total_microseconds() * 1e-3
+    outfile << "time_bg: " << std::chrono::duration<double, std::milli>(rT4 - rT3).count()
             << std::endl;
-    outfile << "time_rot_only: " << (rT5 - rT4).total_microseconds() * 1e-3
+    outfile << "time_rot_only: " << std::chrono::duration<double, std::milli>(rT5 - rT4).count()
             << std::endl;
-    outfile << "time_linsys: " << (rT6 - rT5).total_microseconds() * 1e-3
+    outfile << "time_linsys: " << std::chrono::duration<double, std::milli>(rT6 - rT5).count()
             << std::endl;
-    outfile << "time_grav_ref: " << (rT7 - rT6).total_microseconds() * 1e-3
+    outfile << "time_grav_ref: " << std::chrono::duration<double, std::milli>(rT7 - rT6).count()
             << std::endl;
-    outfile << "time_srf_cov: " << (rT8 - rT7).total_microseconds() * 1e-3
+    outfile << "time_srf_cov: " << std::chrono::duration<double, std::milli>(rT8 - rT7).count()
             << std::endl;
-    outfile << "time_total: " << (rT8 - rT1).total_microseconds() * 1e-3
+    outfile << "time_total: " << std::chrono::duration<double, std::milli>(rT8 - rT1).count()
             << std::endl;
     outfile.close();
   }

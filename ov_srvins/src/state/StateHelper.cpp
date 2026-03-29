@@ -36,8 +36,6 @@
 #include "utils/colors.h"
 #include "utils/print.h"
 
-#include <boost/math/distributions/chi_squared.hpp>
-
 using namespace ov_core;
 using namespace ov_type;
 using namespace ov_srvins;
@@ -305,7 +303,7 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
   // Reverse rows to have upper triangular structure
   reverse_mat(F, false);
 
-  state->rT81 = boost::posix_time::microsec_clock::local_time();
+  state->rT81 = std::chrono::steady_clock::now();
 
   // Get H^T * r + H^T * H * dx for iterative update
   if (is_iterative) {
@@ -351,7 +349,7 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
   }
 
   // clean the buffer
-  state->rT82 = boost::posix_time::microsec_clock::local_time();
+  state->rT82 = std::chrono::steady_clock::now();
 }
 
 void StateHelper::iterative_update_llt(std::shared_ptr<State> state) {
@@ -486,8 +484,19 @@ bool StateHelper::initialize(std::shared_ptr<State> state,
     DataType chi2 = res_update.dot(
         S.selfadjointView<Eigen::Upper>().llt().solve(res_update));
     // Get what our threshold should be
-    boost::math::chi_squared chi_squared_dist(res.rows());
-    DataType chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
+    // Using simple hardcoded values or approximation to remove boost dependency
+    DataType chi2_check = 0;
+    if (res.rows() == 1) chi2_check = 3.841;
+    else if (res.rows() == 2) chi2_check = 5.991;
+    else if (res.rows() == 3) chi2_check = 7.815;
+    else if (res.rows() == 4) chi2_check = 9.488;
+    else if (res.rows() == 5) chi2_check = 11.070;
+    else if (res.rows() == 6) chi2_check = 12.592;
+    else {
+      // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+      double k = (double)res.rows();
+      chi2_check = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
+    }
     if (chi2 > chi_2_mult * chi2_check) {
       return false;
     }

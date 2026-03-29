@@ -101,13 +101,13 @@ VioManager::VioManager(VioManagerOptions &params_)
   // If we are recording statistics, then open our file
   if (params.record_timing_information) {
     // If the file exists, then delete it
-    if (boost::filesystem::exists(params.record_timing_filepath)) {
-      boost::filesystem::remove(params.record_timing_filepath);
+    if (std::filesystem::exists(params.record_timing_filepath)) {
+      std::filesystem::remove(params.record_timing_filepath);
       PRINT_INFO(YELLOW "[STATS]: found old file found, deleted...\n" RESET);
     }
     // Create the directory that we will open the file in
-    boost::filesystem::path p(params.record_timing_filepath);
-    boost::filesystem::create_directories(p.parent_path());
+    std::filesystem::path p(params.record_timing_filepath);
+    std::filesystem::create_directories(p.parent_path());
     // Open our statistics file!
     of_statistics.open(params.record_timing_filepath,
                        std::ofstream::out | std::ofstream::app);
@@ -203,7 +203,7 @@ void VioManager::track_image_and_update(
     const ov_core::CameraData &message_const) {
 
   // Start timing
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // Assert we have valid measurement data and ids
   assert(!message_const.sensor_ids.empty());
@@ -229,14 +229,8 @@ void VioManager::track_image_and_update(
   // Perform our feature tracking!
   trackFEATS->feed_new_camera(message);
 
-  // If the aruco tracker is available, the also pass to it
-  // NOTE: binocular tracking for aruco doesn't make sense as we by default have
-  // the ids NOTE: thus we just call the stereo tracking if we are doing
-  // binocular!
-  if (is_initialized_vio && trackARUCO != nullptr) {
-    trackARUCO->feed_new_camera(message);
-  }
-  rT2 = boost::posix_time::microsec_clock::local_time();
+  trackFEATS->feed_new_camera(message);
+  rT2 = std::chrono::steady_clock::now();
 
   // Check if we should do zero-velocity, if so update the state with it
   // Note that in the case that we only use in the beginning initialization
@@ -265,7 +259,7 @@ void VioManager::track_image_and_update(
   if (!is_initialized_vio) {
     is_initialized_vio = try_to_initialize(message);
     if (!is_initialized_vio) {
-      double time_track = (rT2 - rT1).total_microseconds() * 1e-6;
+      double time_track = std::chrono::duration_cast<std::chrono::microseconds>(rT2 - rT1).count() * 1e-6;
       PRINT_DEBUG(BLUE "[TIME]: %.4f seconds for tracking\n" RESET, time_track);
       return;
     }
@@ -280,7 +274,7 @@ void VioManager::feed_measurement_simulation(
     const std::vector<std::vector<std::pair<size_t, Eigen::Vector2f>>> &feats) {
 
   // Start timing
-  rT1 = boost::posix_time::microsec_clock::local_time();
+  rT1 = std::chrono::steady_clock::now();
 
   // Check if we actually have a simulated tracker
   // If not, recreate and re-cast the tracker to our simulation tracker
@@ -309,7 +303,7 @@ void VioManager::feed_measurement_simulation(
 
   // Feed our simulation tracker
   trackSIM->feed_measurement_simulation(timestamp, camids, feats);
-  rT2 = boost::posix_time::microsec_clock::local_time();
+  rT2 = std::chrono::steady_clock::now();
 
   // Check if we should do zero-velocity, if so update the state with it
   // Note that in the case that we only use in the beginning initialization
@@ -385,7 +379,7 @@ void VioManager::do_feature_propagate_update(
   if (!propagate_state(message.timestamp)) {
     return;
   }
-  rT3 = boost::posix_time::microsec_clock::local_time();
+  rT3 = std::chrono::steady_clock::now();
 
   // If we have not reached max clones, we should just return...
   // This isn't super ideal, but it keeps the logic after this easier...
@@ -445,7 +439,7 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   // Firstly marginalize the oldest clone if needed
   StateHelper::marginalize_old_clone(state);
   StateHelper::marginalize(state);
-  rT4 = boost::posix_time::microsec_clock::local_time();
+  rT4 = std::chrono::steady_clock::now();
 
   // Now, lets get all features that should be used for an update that are lost
   // in the newest frame We explicitly request features that have not been
@@ -463,7 +457,7 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   state->setup_matrix_buffer();
   UpdaterMSCKF::update(state, featsup_MSCKF, params.msckf_options,
                        params.featinit_options);
-  rT5 = boost::posix_time::microsec_clock::local_time();
+  rT5 = std::chrono::steady_clock::now();
 
   // Perform SLAM delay init and update
   // NOTE: that we provide the option here to do a *sequential* update
@@ -473,12 +467,12 @@ void VioManager::update_state(const ov_core::CameraData &message) {
   UpdaterSLAM::update(state, feats_slam_UPDATE, params.slam_options,
                       params.aruco_options);
 
-  rT6 = boost::posix_time::microsec_clock::local_time();
+  rT6 = std::chrono::steady_clock::now();
   UpdaterSLAM::delayed_init(state, feats_slam_DELAYED, params.slam_options,
                             params.aruco_options, params.featinit_options);
-  rT7 = boost::posix_time::microsec_clock::local_time();
+  rT7 = std::chrono::steady_clock::now();
   StateHelper::initialize_slam_in_U(state);
-  rT8 = boost::posix_time::microsec_clock::local_time();
+  rT8 = std::chrono::steady_clock::now();
   StateHelper::update_llt(state);
   state->clear(true);
 
@@ -512,29 +506,29 @@ void VioManager::update_state(const ov_core::CameraData &message) {
     trackARUCO->get_feature_database()->cleanup();
   }
 
-  rT9 = boost::posix_time::microsec_clock::local_time();
+  rT9 = std::chrono::steady_clock::now();
 
   //===================================================================================
   // Debug info, and stats tracking
   //===================================================================================
 
   // Get timing statitics information
-  double time_track = (rT2 - rT1).total_microseconds() * 1e-6;
-  double time_prop = (rT3 - rT2).total_microseconds() * 1e-6;
-  double time_marg = (rT4 - rT3).total_microseconds() * 1e-6;
-  double time_msckf = (rT5 - rT4).total_microseconds() * 1e-6;
-  double time_slam_update = (rT6 - rT5).total_microseconds() * 1e-6;
-  double time_slam_delay = (rT7 - rT6).total_microseconds() * 1e-6;
-  double time_init = (rT8 - rT7).total_microseconds() * 1e-6;
-  double time_qr = (state->rT81 - rT8).total_microseconds() * 1e-6;
-  double time_backsub = (state->rT82 - state->rT81).total_microseconds() * 1e-6;
-  double time_retri = (rT9 - state->rT82).total_microseconds() * 1e-6;
+  double time_track = std::chrono::duration_cast<std::chrono::microseconds>(rT2 - rT1).count() * 1e-6;
+  double time_prop = std::chrono::duration_cast<std::chrono::microseconds>(rT3 - rT2).count() * 1e-6;
+  double time_marg = std::chrono::duration_cast<std::chrono::microseconds>(rT4 - rT3).count() * 1e-6;
+  double time_msckf = std::chrono::duration_cast<std::chrono::microseconds>(rT5 - rT4).count() * 1e-6;
+  double time_slam_update = std::chrono::duration_cast<std::chrono::microseconds>(rT6 - rT5).count() * 1e-6;
+  double time_slam_delay = std::chrono::duration_cast<std::chrono::microseconds>(rT7 - rT6).count() * 1e-6;
+  double time_init = std::chrono::duration_cast<std::chrono::microseconds>(rT8 - rT7).count() * 1e-6;
+  double time_qr = std::chrono::duration_cast<std::chrono::microseconds>(state->rT81 - rT8).count() * 1e-6;
+  double time_backsub = std::chrono::duration_cast<std::chrono::microseconds>(state->rT82 - state->rT81).count() * 1e-6;
+  double time_retri = std::chrono::duration_cast<std::chrono::microseconds>(rT9 - state->rT82).count() * 1e-6;
   if (time_qr < 0) {
     time_qr = time_backsub = 0;
-    time_retri = (rT9 - rT8).total_microseconds() * 1e-6;
+    time_retri = std::chrono::duration_cast<std::chrono::microseconds>(rT9 - rT8).count() * 1e-6;
   }
 
-  double time_total = (rT9 - rT1).total_microseconds() * 1e-6;
+  double time_total = std::chrono::duration_cast<std::chrono::microseconds>(rT9 - rT1).count() * 1e-6;
 
   // Timing information
   PRINT_DEBUG(BLUE "[TIME]: %.4f seconds for tracking\n" RESET, time_track);
@@ -699,7 +693,7 @@ bool VioManager::try_to_initialize(const ov_core::CameraData &message) {
     // Returns from our initializer
     Eigen::MatrixXd covariance;
     std::vector<std::shared_ptr<ov_type::Type>> order;
-    auto init_rT1 = boost::posix_time::microsec_clock::local_time();
+    auto init_rT1 = std::chrono::steady_clock::now();
 
     // Try to initialize the system
     // We will wait for a jerk if we do not have the zero velocity update
@@ -736,10 +730,10 @@ bool VioManager::try_to_initialize(const ov_core::CameraData &message) {
       }
 
       // Else we are good to go, print out our stats
-      auto init_rT2 = boost::posix_time::microsec_clock::local_time();
+      auto init_rT2 = std::chrono::steady_clock::now();
       PRINT_INFO(GREEN
                  "[init]: successful initialization in %.4f seconds\n" RESET,
-                 (init_rT2 - init_rT1).total_microseconds() * 1e-6);
+                 std::chrono::duration_cast<std::chrono::microseconds>(init_rT2 - init_rT1).count() * 1e-6);
       PRINT_INFO(GREEN "[init]: orientation = %.4f, %.4f, %.4f, %.4f\n" RESET,
                  state->imu->quat()(0), state->imu->quat()(1),
                  state->imu->quat()(2), state->imu->quat()(3));
@@ -784,10 +778,10 @@ bool VioManager::try_to_initialize(const ov_core::CameraData &message) {
       thread_init_success = true;
       camera_queue_init.clear();
     } else {
-      auto init_rT2 = boost::posix_time::microsec_clock::local_time();
+      auto init_rT2 = std::chrono::steady_clock::now();
       PRINT_DEBUG(YELLOW
                   "[init]: failed initialization in %.4f seconds\n" RESET,
-                  (init_rT2 - init_rT1).total_microseconds() * 1e-6);
+                  std::chrono::duration_cast<std::chrono::microseconds>(init_rT2 - init_rT1).count() * 1e-6);
       thread_init_success = false;
       std::lock_guard<std::mutex> lck(camera_queue_init_mtx);
       camera_queue_init.clear();

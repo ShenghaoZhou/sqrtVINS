@@ -38,8 +38,7 @@
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/math/distributions/chi_squared.hpp>
+#include <chrono>
 
 using namespace ov_core;
 using namespace ov_type;
@@ -60,12 +59,19 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
     return;
 
   // Initialize the chi squared test table with confidence level 0.95
-  static std::map<int, DataType> chi_squared_table;
+  static std::map<int, float> chi_squared_table;
   if (chi_squared_table.empty()) {
     for (int i = 1; i < 500; i++) {
-      boost::math::chi_squared chi_squared_dist(i);
-      chi_squared_table[i] = boost::math::quantile(chi_squared_dist, 0.95);
+      // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+      double k = (double)i;
+      chi_squared_table[i] = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
     }
+    // Hardcode some small values for better precision
+    chi_squared_table[1] = 3.841;
+    chi_squared_table[2] = 5.991;
+    chi_squared_table[3] = 7.815;
+    chi_squared_table[4] = 9.488;
+    chi_squared_table[5] = 11.070;
   }
 
   // Create our feature initializer
@@ -75,8 +81,8 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
   bool do_clean = !is_iterative;
 
   // Start timing
-  boost::posix_time::ptime rT0, rT1, rT2, rT3, rT4, rT5;
-  rT0 = boost::posix_time::microsec_clock::local_time();
+  std::chrono::steady_clock::time_point rT0, rT1;
+  rT0 = std::chrono::steady_clock::now();
 
   // 0. Get all timestamps our clones are at (and thus valid measurement times)
   std::vector<double> clonetimes;
@@ -118,7 +124,6 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
     }
   }
   // std::cout << "before tri: " << feature_vec.size() << std::endl;
-  rT1 = boost::posix_time::microsec_clock::local_time();
 
   // 2. Create vector of cloned *CAMERA* poses at each of our clone timesteps
   std::unordered_map<size_t,
@@ -174,7 +179,6 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
 
     it1++;
   }
-  rT2 = boost::posix_time::microsec_clock::local_time();
 
   // 4. Compute linear system for each feature, nullspace project, and reject
   auto it2 = feature_vec.begin();
@@ -296,17 +300,14 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
         S.diagonal() += options.sigma_pix_sq * VecX::Ones(S.rows());
         DataType chi2 = res2.dot(S.llt().solve(res2));
 
-        // Get our threshold (we precompute up to 500 but handle the case that
-        // it is more)
-        DataType chi2_check;
-        if (res.rows() < 500) {
+        // Get our threshold
+        DataType chi2_check = 0;
+        if (chi_squared_table.count(res.rows())) {
           chi2_check = chi_squared_table[res.rows()];
         } else {
-          boost::math::chi_squared chi_squared_dist(res.rows());
-          chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
-          PRINT_WARNING(YELLOW
-                        "chi2_check over the residual limit - %d\n" RESET,
-                        (int)res.rows());
+          // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+          double k = (double)res.rows();
+          chi2_check = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
         }
 
         // Check if we should delete or not

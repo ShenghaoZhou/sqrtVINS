@@ -33,7 +33,6 @@
 #include "utils/quat_ops.h"
 
 #include "feat/FeatureInitializer.h"
-#include <boost/math/distributions/chi_squared.hpp>
 
 using namespace ov_srvins;
 using namespace ov_type;

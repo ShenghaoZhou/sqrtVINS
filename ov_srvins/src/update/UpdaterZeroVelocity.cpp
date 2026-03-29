@@ -42,8 +42,7 @@
 #include "utils/print.h"
 #include "utils/quat_ops.h"
 
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/math/distributions/chi_squared.hpp>
+#include <chrono>
 
 using namespace ov_core;
 using namespace ov_type;
@@ -69,12 +68,6 @@ UpdaterZeroVelocity::UpdaterZeroVelocity(
   noises_.sigma_wb_2 = std::pow(noises_.sigma_wb, 2);
   noises_.sigma_ab_2 = std::pow(noises_.sigma_ab, 2);
 
-  // Initialize the chi squared test table with confidence level 0.95
-  // https://github.com/KumarRobotics/msckf_vio/blob/050c50defa5a7fd9a04c1eed5687b405f02919b5/src/msckf_vio.cpp#L215-L221
-  for (int i = 1; i < 1000; i++) {
-    boost::math::chi_squared chi_squared_dist(i);
-    chi_squared_table_[i] = boost::math::quantile(chi_squared_dist, 0.95);
-  }
 }
 
 bool UpdaterZeroVelocity::try_update(std::shared_ptr<State> state,
@@ -228,17 +221,31 @@ bool UpdaterZeroVelocity::try_update(std::shared_ptr<State> state,
   S.diagonal() += zupt_noise_multiplier_ * VecX::Ones(S.rows());
   DataType chi2 = res.dot(S.llt().solve(res));
 
-  // Get our threshold (we precompute up to 1000 but handle the case that it is
-  // more)
-  DataType chi2_check;
-  if (res.rows() < 1000) {
-    chi2_check = chi_squared_table_[res.rows()];
+  // Initialize the chi squared test table with confidence level 0.95
+  static std::map<int, float> chi_squared_table;
+  if (chi_squared_table.empty()) {
+    for (int i = 1; i < 500; i++) {
+      // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+      double k = (double)i;
+      chi_squared_table[i] = k * std::pow(
+          1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
+    }
+    // Hardcode some small values for better precision
+    chi_squared_table[1] = 3.841;
+    chi_squared_table[2] = 5.991;
+    chi_squared_table[3] = 7.815;
+    chi_squared_table[4] = 9.488;
+    chi_squared_table[5] = 11.070;
+  }
+
+  // Get our threshold
+  DataType chi2_check = 0;
+  if (chi_squared_table.count(res.rows())) {
+    chi2_check = chi_squared_table[res.rows()];
   } else {
-    boost::math::chi_squared chi_squared_dist(res.rows());
-    chi2_check = boost::math::quantile(chi_squared_dist, 0.95);
-    PRINT_WARNING(YELLOW
-                  "[ZUPT]: chi2_check over the residual limit - %d\n" RESET,
-                  (int)res.rows());
+    // Wilson-Hilferty transformation for chi-squared quantile (p=0.95)
+    double k = (double)res.rows();
+    chi2_check = k * std::pow(1.0 - 2.0 / (9.0 * k) + 1.64485362695 * std::sqrt(2.0 / (9.0 * k)), 3);
   }
 
   // Check if the image disparity

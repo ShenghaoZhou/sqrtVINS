@@ -53,10 +53,10 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <chrono>
+#include <filesystem>
 
 #include <Eigen/Eigen>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/filesystem.hpp>
 #include <cv_bridge/cv_bridge.h>
 
 #include "utils/DataType.h"
@@ -183,7 +183,7 @@ protected:
 
   // Start and end timestamps
   bool start_time_set = false;
-  boost::posix_time::ptime rT1, rT2;
+  std::chrono::steady_clock::time_point rT1, rT2;
 
   // Thread atomics
   std::atomic<bool> thread_update_running;

@@ -175,9 +175,6 @@ protected:
                             std::vector<std::vector<cv::DMatch>> &matches2,
                             std::vector<cv::DMatch> &good_matches);
 
-  // Timing variables
-  boost::posix_time::ptime rT1, rT2, rT3, rT4, rT5, rT6, rT7;
-
   // Our orb extractor
   cv::Ptr<cv::ORB> orb0 = cv::ORB::create();
   cv::Ptr<cv::ORB> orb1 = cv::ORB::create();

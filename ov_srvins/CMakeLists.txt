@@ -10,8 +10,7 @@ if(NOT OpenCV_FOUND)
     find_package(OpenCV 4 REQUIRED)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS filesystem thread date_time)
-message(STATUS "OPENCV: " ${OpenCV_VERSION} " | BOOST: " ${Boost_VERSION})
+message(STATUS "OPENCV: " ${OpenCV_VERSION})
 
 # If we will compile with aruco support
 option(ENABLE_ARUCO_TAGS "Enable or disable aruco tag (disable if no contrib modules)" ON)
@@ -23,9 +22,8 @@ else()
     add_definitions(-DENABLE_ARUCO_TAGS=1)
 endif()
 
-# We need c++14 for ROS2, thus just require it for everybody
-# NOTE: To future self, hope this isn't an issue...
-set(CMAKE_CXX_STANDARD 14)
+# We need c++17 for std::filesystem
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

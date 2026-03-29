@@ -32,7 +32,7 @@
 
 #ifndef OV_SRVINS_TIMER_H
 #define OV_SRVINS_TIMER_H
-#include <boost/date_time/posix_time/posix_time.hpp>
+#include <chrono>
 #include <string>
 namespace ov_srvins {
 
@@ -63,7 +63,7 @@ public:
   void reset();
 
 private:
-  boost::posix_time::ptime time_start_, time_end_;
+  std::chrono::steady_clock::time_point time_start_, time_end_;
   double duration_ = 0.0;
 };
 

@@ -28,7 +28,7 @@
 
 #include <Eigen/StdVector>
 #include <atomic>
-#include <boost/filesystem.hpp>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -220,7 +220,7 @@ protected:
 
   // Timing statistic file and variables
   std::ofstream of_statistics;
-  boost::posix_time::ptime rT1, rT2, rT3, rT4, rT5, rT6, rT7, rT8, rT9;
+  std::chrono::steady_clock::time_point rT1, rT2, rT3, rT4, rT5, rT6, rT7, rT8, rT9;
 
   // Track how much distance we have traveled
   double timelastupdate = -1;

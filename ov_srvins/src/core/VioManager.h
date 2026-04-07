@@ -6,6 +6,7 @@
  * Copyright (C) 2018-2026 Guoquan Huang
  * Copyright (C) 2018-2023 OpenVINS Contributors
  * Copyright (C) 2018-2023 Patrick Geneva
+ * Copyright (C) 2018-2023 Patrick Geneva
  * Copyright (C) 2018-2019 Kevin Eckenhoff
  *
  * This library is free software; you can redistribute it and/or
@@ -30,8 +31,10 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <cstddef>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include "VioManagerOptions.h"
 
@@ -41,28 +44,26 @@ struct CameraData;
 class TrackBase;
 class FeatureInitializer;
 class Feature;
-
 } // namespace ov_core
+
 namespace ov_srvins {
 class InertialInitializer;
-} // namespace ov_srvins
-
-namespace ov_srvins {
-
 class State;
 class StateHelper;
 class UpdaterMSCKF;
 class UpdaterSLAM;
 class UpdaterZeroVelocity;
 class Propagator;
+class SqrtEstimator;
+} // namespace ov_srvins
+
+namespace ov_srvins {
 
 /**
  * @brief Core class that manages the entire system
  *
- * This class contains the state and other algorithms needed for the MSCKF to
- * work. We feed in measurements into this class and send them to their
- * respective algorithms. If we have measurements to propagate or update with,
- * this class will call on our state to do that.
+ * This class coordinates between trackers, the state estimator, and the initializer.
+ * It handles the high-level workflow of the system.
  */
 class VioManager {
 
@@ -73,7 +74,10 @@ public:
    */
   VioManager(VioManagerOptions &params_);
 
-  /// Our master state object :D
+  /// Our state estimator
+  std::shared_ptr<SqrtEstimator> estimator;
+
+  /// Our master state object (shortcut to estimator->state)
   std::shared_ptr<State> state;
 
   /**
@@ -90,10 +94,6 @@ public:
     track_image_and_update(message);
   }
 
-
-
-
-
   /// If we are initialized or not
   bool initialized() { return is_initialized_vio; }
 
@@ -107,7 +107,7 @@ public:
   std::shared_ptr<State> get_state() { return state; }
 
   /// Accessor to get the current propagator
-  std::shared_ptr<Propagator> get_propagator() { return propagator; }
+  std::shared_ptr<Propagator> get_propagator();
 
   /// Get a nice visualization image of what tracks we have
   cv::Mat get_historical_viz_image();
@@ -124,10 +124,6 @@ public:
 protected:
   /**
    * @brief Given a new set of camera images, this will track them.
-   *
-   * If we are having stereo tracking, we should call stereo tracking functions.
-   * Otherwise we will try to track on each of the images passed.
-   *
    * @param message Contains our timestamp, images, and camera ids
    */
   void track_image_and_update(const ov_core::CameraData &message);
@@ -137,23 +133,10 @@ protected:
    * categories (lost, marg, slam, etc) for update.
    */
   void process_measurements_rules(
-      const ov_core::CameraData &message,
+      double timestamp, const std::vector<int> &sensor_ids,
       std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
       std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
       std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
-
-  /**
-   * @brief Helper to propagate the state forward and manage clones
-   * @param timestamp Target timestamp to propagate to
-   * @return True if propagation was successful
-   */
-  bool propagate_state(double timestamp);
-
-  /**
-   * @brief Helper to update the state with features
-   * @param message Camera data containing features
-   */
-  void update_state(const ov_core::CameraData &message);
 
   /**
    * @brief This will do the propagation and feature updates to the state
@@ -163,12 +146,6 @@ protected:
 
   /**
    * @brief This function will try to initialize the state.
-   *
-   * This should call on our initializer and try to init the state.
-   * In the future we should call the structure-from-motion code from here.
-   * This function could also be repurposed to re-initialize the system after
-   * failure.
-   *
    * @param message Contains our timestamp, images, and camera ids
    * @return True if we have successfully initialized
    */
@@ -176,9 +153,6 @@ protected:
 
   /// Manager parameters
   VioManagerOptions params;
-
-  /// Propagator of our state
-  std::shared_ptr<Propagator> propagator;
 
   /// Our sparse feature tracker (klt or descriptor)
   std::shared_ptr<ov_core::TrackBase> trackFEATS;
@@ -189,18 +163,17 @@ protected:
   /// State initializer
   std::shared_ptr<ov_srvins::InertialInitializer> initializer;
 
-  /// Boolean if we are initialized or not
-  bool is_initialized_vio = false;
-
-  // Note: updaterMSCKF and updaterSLAM have been converted to stateless static
-  // functions
+  /// Propagator of our state
+  std::shared_ptr<Propagator> propagator;
 
   /// Our zero velocity tracker
   std::shared_ptr<UpdaterZeroVelocity> updaterZUPT;
 
+  /// Boolean if we are initialized or not
+  bool is_initialized_vio = false;
+
   /// This is the queue of measurement times that have come in since we starting
-  /// doing initialization After we initialize, we will want to prop & update to
-  /// the latest timestamp quickly
+  /// doing initialization
   std::vector<double> camera_queue_init;
   std::mutex camera_queue_init_mtx;
 

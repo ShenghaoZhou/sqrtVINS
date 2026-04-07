@@ -17,12 +17,10 @@ endif ()
 include_directories(
         src
         ${EIGEN3_INCLUDE_DIR}
-        ${Boost_INCLUDE_DIRS}
 )
 
 # Set link libraries used by all binaries
 list(APPEND thirdparty_libraries
-        ${Boost_LIBRARIES}
         ${OpenCV_LIBRARIES}
         yaml-cpp
 )
@@ -73,8 +71,3 @@ install(DIRECTORY src/
 
 add_executable(test_profile src/test_profile.cpp)
 target_link_libraries(test_profile ov_core_lib ${thirdparty_libraries})
-install(TARGETS test_profile
-        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)

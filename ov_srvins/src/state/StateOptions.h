@@ -23,10 +23,6 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-
-
-
-
 #ifndef OV_SRVINS_STATE_OPTIONS_H
 #define OV_SRVINS_STATE_OPTIONS_H
 
@@ -42,6 +38,7 @@ namespace ov_srvins {
  * @brief Struct which stores all our filter options
  */
 struct StateOptions {
+
   /// Bool to determine whether or not to do first estimate Jacobians
   bool do_fej = true;
 
@@ -78,6 +75,7 @@ struct StateOptions {
 
   /// Number of distinct cameras that we will observe features in
   int num_cameras = 1;
+
   /// What representation our features are in (msckf features)
   ov_type::LandmarkRepresentation::Representation feat_rep_msckf =
       ov_type::LandmarkRepresentation::Representation::GLOBAL_3D;

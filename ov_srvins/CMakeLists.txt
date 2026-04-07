@@ -24,6 +24,7 @@ else()
     add_definitions(-DENABLE_ARUCO_TAGS=1)
 endif()
 
+
 # We need c++17 for std::filesystem
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

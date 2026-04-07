@@ -38,6 +38,7 @@ list(APPEND thirdparty_libraries
         yaml-cpp
 )
 
+
 # Manually link ov_core/ov_init
 message(STATUS "MANUALLY LINKING TO OV_CORE LIBRARY....")
 include_directories(${CMAKE_SOURCE_DIR}/ov_core/src/)
@@ -51,16 +52,6 @@ list(APPEND LIBRARY_SOURCES ${OVCORE_LIBRARY_SOURCES})
 file(GLOB_RECURSE OVCORE_LIBRARY_HEADERS "${CMAKE_SOURCE_DIR}/ov_core/src/*.h")
 list(APPEND LIBRARY_HEADERS ${OVCORE_LIBRARY_HEADERS})
 
-message(STATUS "MANUALLY LINKING TO OV_INIT LIBRARY....")
-include_directories(${CMAKE_SOURCE_DIR}/ov_init/src/)
-file(GLOB_RECURSE OVINIT_LIBRARY_SOURCES "${CMAKE_SOURCE_DIR}/ov_init/src/*.cpp")
-# Filter out mains or unused files if ov_init existed (preserved from ROS1.cmake)
-list(FILTER OVINIT_LIBRARY_SOURCES EXCLUDE REGEX ".*test_dynamic_init\\.cpp$")
-list(FILTER OVINIT_LIBRARY_SOURCES EXCLUDE REGEX ".*test_dynamic_mle\\.cpp$")
-list(FILTER OVINIT_LIBRARY_SOURCES EXCLUDE REGEX ".*test_simulation\\.cpp$")
-list(APPEND LIBRARY_SOURCES ${OVINIT_LIBRARY_SOURCES})
-file(GLOB_RECURSE OVINIT_LIBRARY_HEADERS "${CMAKE_SOURCE_DIR}/ov_init/src/*.h")
-list(APPEND LIBRARY_HEADERS ${OVINIT_LIBRARY_HEADERS})
 
 
 # #################################################
@@ -72,6 +63,7 @@ list(APPEND LIBRARY_SOURCES
         src/state/StateHelper.cpp
         src/state/Propagator.cpp
         src/state/IMUHandler.cpp
+        src/core/SqrtEstimator.cpp
         src/core/VioManager.cpp
         src/core/VioManagerOptions.cpp
         src/update/UpdaterHelper.cpp
@@ -92,6 +84,7 @@ list(APPEND LIBRARY_SOURCES
         src/utils/CameraPoseBuffer.cpp
         src/utils/EigenMatrixBuffer.cpp
         )
+
 
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
@@ -119,3 +112,4 @@ set(CATKIN_PACKAGE_SHARE_DESTINATION "${CMAKE_INSTALL_DATADIR}/geometry")
 install(DIRECTORY launch/
         DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
         )
+

@@ -418,35 +418,30 @@ void Propagator::predict_mean_rk4(std::shared_ptr<State> state, double dt,
           (1.0 / 6.0) * k4_v;
 }
 
-void Propagator::propagate_and_clone(std::shared_ptr<State> state,
-                                     double timestamp) {
+Eigen::Matrix<DataType, 3, 1>
+Propagator::propagate(std::shared_ptr<State> state, double timestamp) {
 
   // If the difference between the current update time and state is zero
   // We should crash, as this means we would have two clones at the same
   // time!!!!
   if (state->timestamp == timestamp &&
       state->clones_IMU.find(state->timestamp) != state->clones_IMU.end()) {
-    PRINT_ERROR(RED "Propagator::propagate_and_clone(): Two same clone in the "
-                    "state!!!!\n" RESET);
+    PRINT_ERROR(
+        RED
+        "Propagator::propagate(): Two same clone in the state!!!!\n" RESET);
     std::exit(EXIT_FAILURE);
   }
 
   // We should crash if we are trying to propagate backwards
   if (state->timestamp > timestamp) {
-    PRINT_ERROR(RED "Propagator::propagate_and_clone(): Propagation called "
-                    "trying to propagate backwards in time!!!!\n" RESET);
     PRINT_ERROR(
         RED
-        "Propagator::propagate_and_clone(): desired propagation = %.4f\n" RESET,
-        (timestamp - state->timestamp));
+        "Propagator::propagate(): Propagation called trying to propagate backwards in time!!!!\n" RESET);
+    PRINT_ERROR(RED "Propagator::propagate(): desired propagation = %.4f\n" RESET,
+                (timestamp - state->timestamp));
     std::exit(EXIT_FAILURE);
   }
 
-  //===================================================================================
-  //===================================================================================
-  //===================================================================================
-  if (state->timestamp != timestamp) {
-  }
   // Set the last time offset value if we have just started the system up
   if (!have_last_prop_time_offset_) {
     last_prop_time_offset_ = state->calib_dt_CAMtoIMU->value()(0);
@@ -460,7 +455,7 @@ void Propagator::propagate_and_clone(std::shared_ptr<State> state,
   double time0 = state->timestamp + last_prop_time_offset_;
   double time1 = timestamp + t_off_new;
   std::vector<ov_core::ImuData> prop_data;
-  imu_handler_.with_imu_data([&](const auto& imu_data) {
+  imu_handler_.with_imu_data([&](const auto &imu_data) {
     prop_data = select_imu_readings(imu_data, time0, time1);
   });
 
@@ -474,12 +469,10 @@ void Propagator::propagate_and_clone(std::shared_ptr<State> state,
   Eigen::Matrix<DataType, 15, 15> Qd_summed =
       Eigen::Matrix<DataType, 15, 15>::Zero();
   double dt_summed = 0;
-  MatX R = MatX::Zero(27, 15);
 
   // Loop through all IMU messages, and use them to move the state forward in
   // time This uses the zero'th order quat, and then constant acceleration
   // discrete
-  Timer t1, t2;
   if (prop_data.size() > 1) {
     for (size_t i = 0; i < prop_data.size() - 1; i++) {
 
@@ -517,38 +510,12 @@ void Propagator::propagate_and_clone(std::shared_ptr<State> state,
   state->update_timestamp(timestamp);
   last_prop_time_offset_ = t_off_new;
 
-  // Get U before it becomes rank-deficient
-  // Clone before Propagation
-  // Call on our cloner and add it to our vector of types
-  // NOTE: this will clone the clone pose to the END of the covariance...
-  std::shared_ptr<Type> posetemp =
-      StateHelper::clone(state, state->imu->pose()->clone());
-
-  // Cast to a JPL pose type, check if valid
-  std::shared_ptr<PoseJPL> pose = std::dynamic_pointer_cast<PoseJPL>(posetemp);
-  if (pose == nullptr) {
-    PRINT_ERROR(RED "INVALID OBJECT RETURNED FROM STATEHELPER CLONE, "
-                    "EXITING!#!@#!@#\n" RESET);
-    std::exit(EXIT_FAILURE);
+  // Last angular velocity (used for cloning when estimating time offset)
+  Eigen::Matrix<DataType, 3, 1> last_w = Eigen::Matrix<DataType, 3, 1>::Zero();
+  if (prop_data.size() > 1) {
+    last_w = prop_data.at(prop_data.size() - 2).wm - state->imu->bias_g();
+  } else if (!prop_data.empty()) {
+    last_w = prop_data.at(prop_data.size() - 1).wm - state->imu->bias_g();
   }
-  // Append the new clone to our clone vector
-  state->clones_IMU[state->timestamp] = pose;
-
-  // Do timeoffset calibraton
-  if (state->options.do_calib_camera_timeoffset) {
-    // Last angular velocity (used for cloning when estimating time offset)
-    Eigen::Matrix<DataType, 3, 1> last_w =
-        Eigen::Matrix<DataType, 3, 1>::Zero();
-    if (prop_data.size() > 1) {
-      last_w = prop_data.at(prop_data.size() - 2).wm - state->imu->bias_g();
-    } else if (!prop_data.empty()) {
-      last_w = prop_data.at(prop_data.size() - 1).wm - state->imu->bias_g();
-    }
-
-    Eigen::Matrix<DataType, 6, 1> dnc_dt =
-        Eigen::Matrix<DataType, 6, 1>::Zero();
-    dnc_dt.block(0, 0, 3, 1) = last_w;
-    dnc_dt.block(3, 0, 3, 1) = state->imu->vel();
-    StateHelper::propagate_timeoffset(state, dnc_dt);
-  }
+  return last_w;
 }

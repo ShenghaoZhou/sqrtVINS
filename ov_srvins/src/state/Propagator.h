@@ -90,9 +90,11 @@ public:
    * clone the current imu pose as a new clone in our state.
    *
    * @param state Pointer to state
-   * @param timestamp Time to propagate to and clone at (CAM clock frame)
+   * @param timestamp Time to propagate to (CAM clock frame)
+   * @return Last angular velocity in the frame (for time-offset propagation)
    */
-  void propagate_and_clone(std::shared_ptr<State> state, double timestamp);
+  Eigen::Matrix<DataType, 3, 1> propagate(std::shared_ptr<State> state,
+                                          double timestamp);
 
   /**
    * @brief Gets what the state and its covariance will be at a given timestamp

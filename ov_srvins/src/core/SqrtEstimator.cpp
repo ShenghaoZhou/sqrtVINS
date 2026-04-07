@@ -129,7 +129,30 @@ bool SqrtEstimator::propagate(double timestamp) {
 
   // Propagate the state forward to the current update time
   if (state->timestamp != timestamp) {
-    propagator->propagate_and_clone(state, timestamp);
+    // Perform IMU propagation
+    Eigen::Matrix<DataType, 3, 1> last_w = propagator->propagate(state, timestamp);
+
+    // Clone the current IMU pose as a new clone in our state
+    // NOTE: this will clone the clone pose to the END of the covariance...
+    std::shared_ptr<ov_type::Type> posetemp =
+        StateHelper::clone(state, state->imu->pose()->clone());
+    std::shared_ptr<ov_type::PoseJPL> pose =
+        std::dynamic_pointer_cast<ov_type::PoseJPL>(posetemp);
+    if (pose == nullptr) {
+      PRINT_ERROR(RED "INVALID OBJECT RETURNED FROM STATEHELPER CLONE, "
+                      "EXITING!#!@#!@#\n" RESET);
+      std::exit(EXIT_FAILURE);
+    }
+    state->clones_IMU[state->timestamp] = pose;
+
+    // Do timeoffset calibraton
+    if (state->options.do_calib_camera_timeoffset) {
+      Eigen::Matrix<DataType, 6, 1> dnc_dt =
+          Eigen::Matrix<DataType, 6, 1>::Zero();
+      dnc_dt.block(0, 0, 3, 1) = last_w;
+      dnc_dt.block(3, 0, 3, 1) = state->imu->vel();
+      StateHelper::propagate_timeoffset(state, dnc_dt);
+    }
   }
   return true;
 }

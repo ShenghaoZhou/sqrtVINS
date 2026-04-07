@@ -26,6 +26,7 @@
 #ifndef OV_SRVINS_UPDATER_SLAM_H
 #define OV_SRVINS_UPDATER_SLAM_H
 
+#include <cstddef>
 #include <Eigen/Eigen>
 #include <memory>
 
@@ -46,11 +47,7 @@ namespace ov_srvins {
  * @note This class is modified from OpenVINS' UpdaterSLAM class, Aruco Tag
  * related logic are kept but not optimized.
  */
-class UpdaterSLAM {
-
-public:
-  // Deleted default constructor
-  UpdaterSLAM() = delete;
+namespace UpdaterSLAM {
 
   /**
    * @brief Given tracked SLAM features, this will try to use them to update the
@@ -60,7 +57,7 @@ public:
    * @param options_slam Updater options for SLAM features
    * @param options_aruco Updater options for ARUCO features
    */
-  static void
+  void
   update(std::shared_ptr<State> state,
          std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
          const UpdaterOptions &options_slam,
@@ -75,7 +72,7 @@ public:
    * @param options_aruco Updater options for ARUCO features
    * @param feat_init_options Feature initializer options
    */
-  static void
+  void
   delayed_init(std::shared_ptr<State> state,
                std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
                const UpdaterOptions &options_slam,
@@ -89,7 +86,7 @@ public:
    * @param options_slam Updater options for SLAM features
    * @param options_aruco Updater options for ARUCO features
    */
-  static void delayed_init_from_MSCKF(
+  void delayed_init_from_MSCKF(
       std::shared_ptr<State> state,
       std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
       const UpdaterOptions &options_slam, const UpdaterOptions &options_aruco);
@@ -103,9 +100,8 @@ public:
    *
    * @param state State of the filter
    */
-  static void change_anchors(std::shared_ptr<State> state);
+  void change_anchors(std::shared_ptr<State> state);
 
-private:
   /**
    * @brief Shifts landmark anchor to new clone
    * @param state State of filter
@@ -113,11 +109,11 @@ private:
    * @param new_anchor_timestamp Clone timestamp we want to move to
    * @param new_cam_id Which camera frame we want to move to
    */
-  static void perform_anchor_change(std::shared_ptr<State> state,
+  void perform_anchor_change(std::shared_ptr<State> state,
                                     std::shared_ptr<ov_type::Landmark> landmark,
                                     double new_anchor_timestamp,
                                     size_t new_cam_id);
-};
+}
 
 } // namespace ov_srvins
 

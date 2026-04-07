@@ -86,7 +86,7 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
   }
 }
 
-bool SqrtEstimator::try_zupt(double timestamp, bool &has_moved_since_zupt) {
+bool SqrtEstimator::try_zupt(double timestamp, bool has_moved_since_zupt) {
   if (updaterZUPT == nullptr)
     return false;
 

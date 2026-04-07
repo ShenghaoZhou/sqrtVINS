@@ -45,7 +45,7 @@ DataType GetSmallestEVwithJacobian(const Mat3 &xxF, const Mat3 &yyF,
                                    const Mat3 &zzF, const Mat3 &xyF,
                                    const Mat3 &yzF, const Mat3 &zxF,
                                    const Vec3 &cayley,
-                                   Eigen::Matrix<DataType, 1, 3> &jacobian);
+                                   Vec3 &jacobian);
 
 Mat3 GetNumericalJacobians(const Mat3 &R);
 

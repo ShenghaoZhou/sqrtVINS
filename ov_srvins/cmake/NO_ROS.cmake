@@ -64,6 +64,7 @@ list(APPEND LIBRARY_SOURCES
         src/state/Propagator.cpp
         src/state/IMUHandler.cpp
         src/core/SqrtEstimator.cpp
+        src/core/Frontend.cpp
         src/core/VioManager.cpp
         src/core/VioManagerOptions.cpp
         src/update/UpdaterHelper.cpp

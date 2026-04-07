@@ -909,7 +909,7 @@ bool DynamicInitializer::solve_rotation(
 
   Vec3 cayley = Rot2Cayley(R_C1toC0);
   Vec3 cayley_tmp = Rot2Cayley(R_C1toC0);
-  Eigen::Matrix<DataType, 1, 3> jacobian;
+  Vec3 jacobian;
 
   DataType r =
       GetSmallestEVwithJacobian(xxF, yyF, zzF, xyF, yzF, zxF, cayley, jacobian);
@@ -966,8 +966,8 @@ bool DynamicInitializer::solve_bg(
   // Start solver
   Mat3 H = Mat3::Zero();
   Mat3 H_total = Mat3::Zero();
-  Eigen::Matrix<DataType, 1, 3> J, J_perturb;
-  Eigen::Matrix<DataType, 1, 3> J_total = MatX::Zero(1, 3);
+  Vec3 J, J_perturb;
+  Vec3 J_total = Vec3::Zero();
   DataType res_curr, res_new, res_tmp, res;
   DataType lambda = params_.init_grav_opt_init_lambda;
   Vec3 dbg = Vec3::Zero();
@@ -989,7 +989,7 @@ bool DynamicInitializer::solve_bg(
         dbg_tmp(m) += perturb;
         get_bg_jacobians(map_camera_cpi_I0toIi, data.second, dbg_tmp, J_perturb,
                          res_tmp);
-        H.row(m) = (J_perturb - J) / perturb;
+        H.row(m) = (J_perturb - J).transpose() / perturb;
       }
       H_total += H;
       J_total += J;
@@ -1000,7 +1000,7 @@ bool DynamicInitializer::solve_bg(
     Mat3 H_total_tmp = H_total;
     H_total_tmp.diagonal().array() += lambda * D.array();
 
-    Vec3 dx = H_total_tmp.llt().solve(-J_total.transpose());
+    Vec3 dx = H_total_tmp.llt().solve(-J_total);
     Vec3 dbg_tmp = dbg + dx;
 
     for (auto data : bg_solver_data_all) {
@@ -1008,7 +1008,7 @@ bool DynamicInitializer::solve_bg(
       res_new += res;
     }
 
-    DataType rho = (J_total * dx + 0.5 * dx.transpose() * H_total * dx)(0) /
+    DataType rho = (J_total.transpose() * dx + 0.5 * dx.transpose() * H_total * dx)(0) /
                    (res_new - res_curr);
     bool do_update = true;
 
@@ -1048,7 +1048,7 @@ void DynamicInitializer::get_bg_jacobians(
     const std::map<double, std::shared_ptr<ov_core::CpiV1>>
         &map_camera_cpi_I0toIi,
     const BgSolverData &data, const Vec3 &delta_bg,
-    Eigen::Matrix<DataType, 1, 3> &jacobian, DataType &res) {
+    Vec3 &jacobian, DataType &res) {
   double time0 = data.time0;
   double time1 = data.time1;
   size_t cam_id0 = data.cam_id0;
@@ -1069,13 +1069,14 @@ void DynamicInitializer::get_bg_jacobians(
       R_I0toC0 * R_ItoI0 * R_ItoI1.transpose() * R_I1toC1.transpose();
 
   Vec3 cayley = Rot2Cayley(R_C1toC0);
-  Eigen::Matrix<DataType, 1, 3> dlambda_dcayley;
+  Vec3 dlambda_dcayley;
   res = GetSmallestEVwithJacobian(data.xxF, data.yyF, data.zzF, data.xyF,
                                   data.yzF, data.zxF, cayley, dlambda_dcayley);
   Mat3 dcayley_dtheta = GetNumericalJacobians(R_C1toC0);
 
-  jacobian = dlambda_dcayley * dcayley_dtheta *
-             (-R_I0toC0 * Jq0 + R_I0toC0 * R_ItoI0 * R_ItoI1.transpose() * Jq1);
+  jacobian = (dlambda_dcayley.transpose() * dcayley_dtheta *
+             (-R_I0toC0 * Jq0 + R_I0toC0 * R_ItoI0 * R_ItoI1.transpose() * Jq1))
+                 .transpose();
 }
 
 void DynamicInitializer::prepare_bg_solver_data(

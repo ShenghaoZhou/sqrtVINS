@@ -50,11 +50,10 @@ namespace ov_srvins {
 class InertialInitializer;
 class State;
 class StateHelper;
-class UpdaterMSCKF;
-class UpdaterSLAM;
 class UpdaterZeroVelocity;
 class Propagator;
 class SqrtEstimator;
+class Frontend;
 } // namespace ov_srvins
 
 namespace ov_srvins {
@@ -73,6 +72,11 @@ public:
    * @param params_ Parameters loaded from either ROS or CMDLINE
    */
   VioManager(VioManagerOptions &params_);
+
+  /**
+   * @brief Destructor, will ensure background threads are joined
+   */
+  ~VioManager();
 
   /// Our state estimator
   std::shared_ptr<SqrtEstimator> estimator;
@@ -129,16 +133,6 @@ protected:
   void track_image_and_update(const ov_core::CameraData &message);
 
   /**
-   * @brief Helper to handle the logic of sorting features into different
-   * categories (lost, marg, slam, etc) for update.
-   */
-  void process_measurements_rules(
-      double timestamp, const std::vector<int> &sensor_ids,
-      std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
-      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
-      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
-
-  /**
    * @brief This will do the propagation and feature updates to the state
    * @param message Contains our timestamp, images, and camera ids
    */
@@ -154,11 +148,8 @@ protected:
   /// Manager parameters
   VioManagerOptions params;
 
-  /// Our sparse feature tracker (klt or descriptor)
-  std::shared_ptr<ov_core::TrackBase> trackFEATS;
-
-  /// Our aruoc tracker
-  std::shared_ptr<ov_core::TrackBase> trackARUCO;
+  /// Our front-end manager (handles tracking and image processing)
+  std::shared_ptr<ov_srvins::Frontend> frontend;
 
   /// State initializer
   std::shared_ptr<ov_srvins::InertialInitializer> initializer;
@@ -170,12 +161,15 @@ protected:
   std::shared_ptr<UpdaterZeroVelocity> updaterZUPT;
 
   /// Boolean if we are initialized or not
-  bool is_initialized_vio = false;
+  std::atomic<bool> is_initialized_vio = {false};
 
   /// This is the queue of measurement times that have come in since we starting
   /// doing initialization
   std::vector<double> camera_queue_init;
   std::mutex camera_queue_init_mtx;
+
+  /// Main mutex to protect estimator and frontend access during initialization
+  std::mutex vio_mtx;
 
   // Timing statistic file and variables
   std::ofstream of_statistics;
@@ -186,14 +180,16 @@ protected:
   DataType distance = 0;
 
   // Startup time of the filter
-  double startup_time = -1;
+  std::atomic<double> startup_time = {-1.0};
 
   // Threads and their atomics
-  std::atomic<bool> thread_init_running, thread_init_success;
+  std::atomic<bool> thread_init_running = {false};
+  std::atomic<bool> thread_init_success = {false};
+  std::thread initialization_thread;
 
   // If we did a zero velocity update
-  bool did_zupt_update = false;
-  bool has_moved_since_zupt = false;
+  std::atomic<bool> did_zupt_update = {false};
+  std::atomic<bool> has_moved_since_zupt = {false};
 
   // Good features that where used in the last update (used in visualization)
   std::vector<Vec3> good_features_MSCKF;

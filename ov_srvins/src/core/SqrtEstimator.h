@@ -68,7 +68,7 @@ public:
    * @param has_moved_since_zupt Flag indicating if the system has moved
    * @return True if a ZUPT update was performed
    */
-  bool try_zupt(double timestamp, bool &has_moved_since_zupt);
+  bool try_zupt(double timestamp, bool has_moved_since_zupt);
 
   /**
    * @brief Propagate the state forward and add a new clone

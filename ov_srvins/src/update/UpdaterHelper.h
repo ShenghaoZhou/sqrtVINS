@@ -30,6 +30,7 @@
 #ifndef OV_SRVINS_UPDATER_HELPER_H
 #define OV_SRVINS_UPDATER_HELPER_H
 
+#include <cstddef>
 #include <Eigen/Eigen>
 #include <memory>
 #include <unordered_map>
@@ -52,8 +53,7 @@ namespace ov_srvins {
  * @ref update-feat page which has detailed equations.
  *
  */
-class UpdaterHelper {
-public:
+namespace UpdaterHelper {
   /**
    * @brief Feature object that our UpdaterHelper leverages, has all
    * measurements and means
@@ -113,7 +113,7 @@ public:
    * @param[out] x_order Extra variables our extra Jacobian has (for example
    * anchored pose)
    */
-  static void get_feature_jacobian_representation(
+  void get_feature_jacobian_representation(
       std::shared_ptr<State> state, UpdaterHelperFeature &feature, Mat3 &H_f,
       std::vector<MatX> &H_x,
       std::vector<std::shared_ptr<ov_type::Type>> &x_order);
@@ -132,11 +132,11 @@ public:
    * @param[out] x_order Extra variables our extra Jacobian has (for example
    * anchored pose)
    */
-  static bool get_feature_jacobian_full(
+  bool get_feature_jacobian_full(
       std::shared_ptr<State> state, UpdaterHelperFeature &feature, MatX &H_f,
       MatX &H_x, VecX &res,
       std::vector<std::shared_ptr<ov_type::Type>> &x_order);
-};
+}
 
 } // namespace ov_srvins
 

@@ -218,7 +218,7 @@ private:
   void get_bg_jacobians(const std::map<double, std::shared_ptr<ov_core::CpiV1>>
                             &map_camera_cpi_I0toIi,
                         const BgSolverData &data_all, const Vec3 &delta_bg,
-                        Eigen::Matrix<DataType, 1, 3> &jacobian, DataType &res);
+                        Vec3 &jacobian, DataType &res);
 
   /**
    * @brief Prepare all bg solver data

@@ -26,6 +26,7 @@
 #ifndef OV_SRVINS_UPDATER_MSCKF_H
 #define OV_SRVINS_UPDATER_MSCKF_H
 
+#include <cstddef>
 #include <Eigen/Eigen>
 #include <memory>
 
@@ -46,11 +47,7 @@ namespace ov_srvins {
  * feature Jacobian. After this we compress all the measurements to have an
  * efficient update and update the state.
  */
-class UpdaterMSCKF {
-
-public:
-  // Deleted default constructor
-  UpdaterMSCKF() = delete;
+namespace UpdaterMSCKF {
 
   /**
    * @brief Given tracked features, this will try to use them to update the
@@ -62,7 +59,7 @@ public:
    * @param feat_init_options Options for feature initialization
    * @param is_iterative If we are doing an iterative update (store jacobians)
    */
-  static void
+  void
   update(std::shared_ptr<State> state,
          std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec,
          const UpdaterOptions &options,
@@ -75,8 +72,8 @@ public:
    * @param state State of the filter
    * @return  void    [return description]
    */
-  static void update_features(std::shared_ptr<State> state);
-};
+  void update_features(std::shared_ptr<State> state);
+}
 
 } // namespace ov_srvins
 

@@ -371,7 +371,7 @@ DataType GetSmallestEVwithJacobian(const Mat3 &xxF, const Mat3 &yyF,
                                    const Mat3 &zzF, const Mat3 &xyF,
                                    const Mat3 &yzF, const Mat3 &zxF,
                                    const Vec3 &cayley,
-                                   Eigen::Matrix<DataType, 1, 3> &jacobian) {
+                                   Vec3 &jacobian) {
 
   Mat3 M_jac1 = Mat3::Zero();
   Mat3 M_jac2 = Mat3::Zero();
@@ -498,9 +498,9 @@ DataType GetSmallestEVwithJacobian(const Mat3 &xxF, const Mat3 &yyF,
   DataType smallestEV_jac2 = (-b_jac2 - 2.0 * k_jac2) / 3.0;
   DataType smallestEV_jac3 = (-b_jac3 - 2.0 * k_jac3) / 3.0;
 
-  jacobian(0, 0) = smallestEV_jac1;
-  jacobian(0, 1) = smallestEV_jac2;
-  jacobian(0, 2) = smallestEV_jac3;
+  jacobian[0] = smallestEV_jac1;
+  jacobian[1] = smallestEV_jac2;
+  jacobian[2] = smallestEV_jac3;
   return smallestEV;
 }
 

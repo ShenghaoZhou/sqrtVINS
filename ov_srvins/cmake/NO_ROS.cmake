@@ -114,3 +114,19 @@ install(DIRECTORY launch/
         DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
         )
 
+# #################################################
+# Python Bindings
+# #################################################
+find_package(pybind11 REQUIRED)
+message(STATUS "PYBIND11: " ${pybind11_VERSION})
+
+pybind11_add_module(ov_srvins_py src/pybind.cpp)
+target_link_libraries(ov_srvins_py PRIVATE ov_srvins_lib)
+target_include_directories(ov_srvins_py PRIVATE src/)
+
+install(TARGETS ov_srvins_py
+        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+        )
+

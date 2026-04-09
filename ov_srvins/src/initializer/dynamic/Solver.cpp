@@ -100,6 +100,10 @@ bool Solver::solve() {
   int num_features_before = features_vec_.size();
 
   for (auto time : map_camera_times_) {
+    // Skip if we are already at this timestamp (e.g. at the start of initialization)
+    if (time <= state_->timestamp) {
+        continue;
+    }
     // Perform IMU propagation
     Eigen::Matrix<DataType, 3, 1> last_w = propagator_->propagate(state_, time);
 

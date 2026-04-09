@@ -657,9 +657,14 @@ void StateHelper::initialize_state(std::shared_ptr<State> state,
                                    double timestamp) {
   // Clear first
   state->variables_.clear();
+  state->clones_IMU.clear();
+  state->features_SLAM.clear();
+  state->features_MSCKF.clear();
   state->calib_IMUtoCAM.clear();
   state->cam_intrinsics.clear();
   state->cam_intrinsics_cameras.clear();
+  state->clear(true);
+  state->is_initialized = false;
 
   // Setup timestamp
   state->update_timestamp(timestamp);

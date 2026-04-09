@@ -152,5 +152,8 @@ bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,
     prev_static_timestamp_ = -1;
   is_static_prev_ = is_still;
 
+  if (init_success) {
+    state->is_initialized = true;
+  }
   return init_success;
 }

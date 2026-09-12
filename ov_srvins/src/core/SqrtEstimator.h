@@ -63,6 +63,20 @@ public:
   void feed_imu(const ov_core::ImuData &message, double oldest_time);
 
   /**
+   * @brief Feed a single IMU measurement, computing the buffer trim time
+   * internally (mirrors VioManager::feed_measurement_imu)
+   * @param message IMU data
+   */
+  void feed_measurement_imu(const ov_core::ImuData &message);
+
+  /**
+   * @brief Feed a batch of IMU measurements in timestamp order, computing the
+   * buffer trim time once for the whole batch
+   * @param messages IMU data sorted by timestamp
+   */
+  void feed_imu_batch(const std::vector<ov_core::ImuData> &messages);
+
+  /**
    * @brief Try to perform a zero-velocity update
    * @param timestamp Target timestamp
    * @param has_moved_since_zupt Flag indicating if the system has moved

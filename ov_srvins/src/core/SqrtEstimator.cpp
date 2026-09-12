@@ -86,6 +86,40 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
   }
 }
 
+void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
+  // The oldest time we need IMU with is the last clone
+  double oldest_time = state->margtimestep();
+  if (oldest_time > state->timestamp) {
+    oldest_time = -1;
+  }
+  if (!state->is_initialized) {
+    oldest_time = message.timestamp - params.init_options.init_window_time +
+                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
+  }
+  feed_imu(message, oldest_time);
+}
+
+void SqrtEstimator::feed_imu_batch(
+    const std::vector<ov_core::ImuData> &messages) {
+  if (messages.empty()) {
+    return;
+  }
+  // The buffer trim time only changes on propagation (new clones), not on
+  // feeding, so computing it once for the batch is equivalent to per-message
+  double oldest_time = state->margtimestep();
+  if (oldest_time > state->timestamp) {
+    oldest_time = -1;
+  }
+  if (!state->is_initialized) {
+    oldest_time = messages.front().timestamp -
+                  params.init_options.init_window_time +
+                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
+  }
+  for (const auto &message : messages) {
+    feed_imu(message, oldest_time);
+  }
+}
+
 bool SqrtEstimator::try_zupt(double timestamp, bool has_moved_since_zupt) {
   if (updaterZUPT == nullptr)
     return false;

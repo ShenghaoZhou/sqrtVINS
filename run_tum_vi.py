@@ -47,6 +47,8 @@ def run_vio(dataset_path, config_path):
     
     cam_times = cam0_df['#timestamp'].values / 1e9
     imu_times = imu_df['#timestamp'].values / 1e9
+    imu_wm = imu_df[['w_RS_S_x', 'w_RS_S_y', 'w_RS_S_z']].to_numpy()
+    imu_am = imu_df[['a_RS_S_x', 'a_RS_S_y', 'a_RS_S_z']].to_numpy()
     
     # Load Masks if enabled
     masks = []
@@ -63,6 +65,8 @@ def run_vio(dataset_path, config_path):
     cam_idx = 0
     trajectory = []
     timestamps = []
+    has_moved_since_zupt = False
+    zero_mask = None
     
     # Skip camera frames before the first IMU
     while cam_idx < len(cam_times) and cam_times[cam_idx] < imu_times[0]:
@@ -76,54 +80,59 @@ def run_vio(dataset_path, config_path):
     try:
         while cam_idx < len(cam_times):
             curr_cam_time = cam_times[cam_idx]
-            
-            # Feed IMU measurements up to this camera time
-            while imu_idx < len(imu_times) and imu_times[imu_idx] <= curr_cam_time:
-                imu_msg = vins.ImuData()
-                imu_msg.timestamp = imu_times[imu_idx]
-                row = imu_df.iloc[imu_idx]
-                imu_msg.wm = np.array([row['w_RS_S_x'], row['w_RS_S_y'], row['w_RS_S_z']])
-                imu_msg.am = np.array([row['a_RS_S_x'], row['a_RS_S_y'], row['a_RS_S_z']])
-                
-                estimator.feed_imu(imu_msg, -1.0)
-                imu_idx += 1
-            
+
+            # Feed IMU measurements up to this camera time in one batched call
+            k = np.searchsorted(imu_times, curr_cam_time, side='right')
+            if k > imu_idx:
+                estimator.feed_imu_batch(imu_times[imu_idx:k], imu_wm[imu_idx:k], imu_am[imu_idx:k])
+                imu_idx = k
+
             # Feed Camera measurement
             cam_msg = vins.CameraData()
             cam_msg.timestamp = curr_cam_time
             cam_msg.sensor_ids = [0]
-            
+
             img0_path = os.path.join(dataset_path, f"mav0/cam0/data/{cam0_df.iloc[cam_idx]['filename']}")
-            
+
             img0 = cv2.imread(img0_path, cv2.IMREAD_GRAYSCALE)
-            
+
             if img0 is None:
                 cam_idx += 1
                 continue
-                
+
             cam_msg.images = [img0]
             if options.use_mask:
                 cam_msg.masks = masks
             else:
-                cam_msg.masks = [np.zeros(img0.shape, dtype=np.uint8)]
-            
+                if zero_mask is None:
+                    zero_mask = np.zeros(img0.shape, dtype=np.uint8)
+                cam_msg.masks = [zero_mask]
+
             try:
                 frontend.feed_camera(cam_msg)
-                
+
+                state = estimator.get_state()
+
                 # Check for initialization
-                if not estimator.get_state().is_initialized:
-                    if initializer.initialize(estimator.get_state(), False):
+                if not state.is_initialized:
+                    if initializer.initialize(state, False):
                         print(f"VIO Initialized at {curr_cam_time}!")
                         frontend.set_startup_time(curr_cam_time)
+                        frontend.get_trackFEATS().get_feature_database().cleanup_measurements(state.timestamp)
+                        if np.linalg.norm(state.imu.vel()) > options.zupt_max_velocity:
+                            has_moved_since_zupt = True
                     cam_idx += 1
                     continue
 
-                # Feature Processing (Frontend)
-                feats_msckf, feats_slam_up, feats_slam_delayed = frontend.process_measurements_rules(curr_cam_time, [0])
-                
-                # Estimator Update
-                if estimator.propagate(curr_cam_time):
-                    estimator.update(feats_msckf, feats_slam_up, feats_slam_delayed)
+                # Try a zero-velocity update (mirrors track_image_and_update)
+                if estimator.try_zupt(curr_cam_time, has_moved_since_zupt):
+                    cam_idx += 1
+                    continue
+
+                # Propagation, feature selection, update, and database cleanup
+                # in a single C++ call (no feature list round-trip)
+                if estimator.propagate_and_update(frontend, curr_cam_time, [0]):
+                    has_moved_since_zupt = True
             except Exception as e:
                 # print(f"Error at frame {cam_idx}: {e}")
                 pass

@@ -46,6 +46,11 @@ using namespace ov_srvins;
 Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
     : params(params_), state(state_) {
 
+  // Globally set the thread count and RNG seed so direct Frontend users
+  // (e.g. the Python bindings) match the VioManager configuration
+  cv::setNumThreads(params.num_opencv_threads);
+  cv::setRNGSeed(0);
+
   // Let's make a feature extractor
   int init_max_features =
       std::floor((float)params.init_options.init_max_features /

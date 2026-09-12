@@ -104,7 +104,9 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readonly("featid", &Feature::featid);
 
     py::class_<FeatureDatabase, std::shared_ptr<FeatureDatabase>>(m, "FeatureDatabase")
-        .def(py::init<>());
+        .def(py::init<>())
+        .def("cleanup", &FeatureDatabase::cleanup)
+        .def("cleanup_measurements", &FeatureDatabase::cleanup_measurements);
 
     // Bind TrackBase
     py::class_<TrackBase, std::shared_ptr<TrackBase>>(m, "TrackBase")
@@ -115,9 +117,61 @@ PYBIND11_MODULE(ov_srvins_py, m) {
     py::class_<SqrtEstimator, std::shared_ptr<SqrtEstimator>>(m, "SqrtEstimator")
         .def(py::init<VioManagerOptions&>())
         .def("feed_imu", &SqrtEstimator::feed_imu)
+        .def("feed_measurement_imu", &SqrtEstimator::feed_measurement_imu)
+        .def("feed_imu_batch",
+             [](SqrtEstimator &self,
+                py::array_t<double, py::array::c_style | py::array::forcecast> timestamps,
+                py::array_t<double, py::array::c_style | py::array::forcecast> wm,
+                py::array_t<double, py::array::c_style | py::array::forcecast> am) {
+               auto ts_buf = timestamps.unchecked<1>();
+               auto wm_buf = wm.unchecked<2>();
+               auto am_buf = am.unchecked<2>();
+               if (ts_buf.shape(0) != wm_buf.shape(0) || ts_buf.shape(0) != am_buf.shape(0))
+                 throw std::runtime_error("feed_imu_batch: timestamps/wm/am must have the same length");
+               size_t n = (size_t)ts_buf.shape(0);
+               std::vector<ov_core::ImuData> msgs(n);
+               for (size_t i = 0; i < n; i++) {
+                 msgs[i].timestamp = ts_buf(i);
+                 for (int j = 0; j < 3; j++) {
+                   msgs[i].wm(j) = wm_buf(i, j);
+                   msgs[i].am(j) = am_buf(i, j);
+                 }
+               }
+               self.feed_imu_batch(msgs);
+             }, py::arg("timestamps"), py::arg("wm"), py::arg("am"))
         .def("try_zupt", &SqrtEstimator::try_zupt)
         .def("propagate", &SqrtEstimator::propagate)
         .def("update", &SqrtEstimator::update)
+        .def("propagate_and_update",
+             [](SqrtEstimator &self, Frontend &frontend, double timestamp,
+                const std::vector<int> &sensor_ids) {
+               // Mirrors VioManager::do_feature_propagate_update: propagate,
+               // select features, update, and clean the tracker databases -
+               // all inside a single Python->C++ call with no feature
+               // list round-trip
+               auto state = self.get_state();
+               if (!self.propagate(timestamp))
+                 return false;
+               if ((int)state->clones_IMU.size() <
+                           std::min(state->options.max_clone_size, 5) &&
+                       state->features_SLAM.empty())
+                 return false;
+               if (state->timestamp != timestamp)
+                 return false;
+               if ((int)state->clones_IMU.size() >
+                   state->options.max_clone_size + 1) {
+                 frontend.get_trackFEATS()->get_feature_database()->cleanup_measurements(state->margtimestep());
+                 if (frontend.get_trackARUCO() != nullptr)
+                   frontend.get_trackARUCO()->get_feature_database()->cleanup_measurements(state->margtimestep());
+               }
+               std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED;
+               frontend.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
+               self.update(featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
+               frontend.get_trackFEATS()->get_feature_database()->cleanup();
+               if (frontend.get_trackARUCO() != nullptr)
+                 frontend.get_trackARUCO()->get_feature_database()->cleanup();
+               return true;
+             }, py::arg("frontend"), py::arg("timestamp"), py::arg("sensor_ids"))
         .def("get_state", &SqrtEstimator::get_state)
         .def("get_propagator", &SqrtEstimator::get_propagator);
 

@@ -36,6 +36,7 @@
 #include "track/TrackAruco.h"
 #include "track/TrackDescriptor.h"
 #include "track/TrackKLT.h"
+#include "vision/CVBackend.h"
 
 #include "state/State.h"
 #include "utils/print.h"
@@ -56,11 +57,20 @@ Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
       std::floor((float)params.init_options.init_max_features /
                  (float)params.state_options.num_cameras);
   if (params.use_klt) {
+    // Select the backend that implements the core computer vision operations
+    // (traditional OpenCV by default, or the Ocean framework)
+    std::shared_ptr<ov_core::vision::CVBackend> cv_backend;
+    try {
+      cv_backend = ov_core::vision::CVBackend::create(params.cv_backend);
+    } catch (const std::exception &e) {
+      PRINT_ERROR(RED "[ERROR]: %s\n" RESET, e.what());
+      std::exit(EXIT_FAILURE);
+    }
     trackFEATS = std::shared_ptr<TrackBase>(new TrackKLT(
         state->cam_intrinsics_cameras, init_max_features,
         state->options.max_aruco_features, params.use_stereo,
         params.histogram_method, params.fast_threshold, params.grid_x,
-        params.grid_y, params.min_px_dist, params.ransac_th));
+        params.grid_y, params.min_px_dist, params.ransac_th, cv_backend));
   } else {
     trackFEATS = std::shared_ptr<TrackBase>(new TrackDescriptor(
         state->cam_intrinsics_cameras, init_max_features,

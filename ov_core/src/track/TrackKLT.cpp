@@ -70,23 +70,47 @@ void TrackKLT::feed_new_camera(const CameraData &message) {
     // Histogram equalize
     cv::Mat img;
     if (histogram_method == HistogramMethod::HISTOGRAM) {
-      cv::equalizeHist(message.images.at(msg_id), img);
+      img = backend->imageOps()
+                .equalizeHistogram(
+                    vision::Image::fromCv(message.images.at(msg_id)))
+                .view.toCv()
+                .clone();
     } else if (histogram_method == HistogramMethod::CLAHE) {
       DataType eq_clip_limit = 10.0;
-      cv::Size eq_win_size = cv::Size(8, 8);
-      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(eq_clip_limit, eq_win_size);
-      clahe->apply(message.images.at(msg_id), img);
+      int eq_win_size = 8;
+      if (!backend->supports(vision::Op::CLAHE)) {
+        // Fall back to global histogram equalization if the backend does not
+        // implement CLAHE (e.g. the Ocean backend)
+        if (!warned_clahe_unsupported) {
+          warned_clahe_unsupported = true;
+          PRINT_WARNING(
+              YELLOW "[KLT-EXTRACTOR]: backend '%s' does not support CLAHE, "
+                     "falling back to global histogram equalization\n" RESET,
+              backend->name().c_str());
+        }
+        img = backend->imageOps()
+                  .equalizeHistogram(
+                      vision::Image::fromCv(message.images.at(msg_id)))
+                  .view.toCv()
+                  .clone();
+      } else {
+        img = backend->imageOps()
+                  .applyCLAHE(vision::Image::fromCv(message.images.at(msg_id)),
+                              eq_clip_limit, eq_win_size)
+                  .view.toCv()
+                  .clone();
+      }
     } else {
       img = message.images.at(msg_id);
     }
 
     // Extract image pyramid
-    std::vector<cv::Mat> imgpyr;
-    cv::buildOpticalFlowPyramid(img, imgpyr, win_size, pyr_levels);
+    vision::Pyramid imgpyr = backend->imageOps().buildPyramid(
+        vision::Image::fromCv(img), pyr_levels, win_size.width);
 
     // Save!
     img_curr[cam_id] = img;
-    img_pyramid_curr[cam_id] = imgpyr;
+    img_pyramid_curr[cam_id] = std::move(imgpyr);
   }
 
   // Either call our stereo or monocular version
@@ -118,7 +142,7 @@ void TrackKLT::feed_monocular(const CameraData &message, size_t msg_id) {
 
   // Get our image objects for this image
   cv::Mat img = img_curr.at(cam_id);
-  std::vector<cv::Mat> imgpyr = img_pyramid_curr.at(cam_id);
+  const vision::Pyramid &imgpyr = img_pyramid_curr.at(cam_id);
   cv::Mat mask = message.masks.at(msg_id);
   rT2 = std::chrono::steady_clock::now();
 
@@ -242,8 +266,8 @@ void TrackKLT::feed_stereo(const CameraData &message, size_t msg_id_left,
   // Get our image objects for this image
   cv::Mat img_left = img_curr.at(cam_id_left);
   cv::Mat img_right = img_curr.at(cam_id_right);
-  std::vector<cv::Mat> imgpyr_left = img_pyramid_curr.at(cam_id_left);
-  std::vector<cv::Mat> imgpyr_right = img_pyramid_curr.at(cam_id_right);
+  const vision::Pyramid &imgpyr_left = img_pyramid_curr.at(cam_id_left);
+  const vision::Pyramid &imgpyr_right = img_pyramid_curr.at(cam_id_right);
   cv::Mat mask_left = message.masks.at(msg_id_left);
   cv::Mat mask_right = message.masks.at(msg_id_right);
   rT2 = std::chrono::steady_clock::now();
@@ -452,21 +476,24 @@ void TrackKLT::feed_stereo(const CameraData &message, size_t msg_id_left,
             std::chrono::duration_cast<std::chrono::microseconds>(rT6 - rT1).count() * 1e-6);
 }
 
-void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
+void TrackKLT::perform_detection_monocular(const vision::Pyramid &img0pyr,
                                            const cv::Mat &mask0,
                                            std::vector<cv::KeyPoint> &pts0,
                                            std::vector<size_t> &ids0) {
+
+  // The detection operates on the full resolution (first) pyramid level
+  const vision::Image &img0 = img0pyr.levels.at(0);
 
   // Create a 2D occupancy grid for this current image
   // Note that we scale this down, so that each grid point is equal to a set of
   // pixels This means that we will reject points that less than grid_px_size
   // points away then existing features
   cv::Size size_close(
-      (int)((float)img0pyr.at(0).cols / (float)min_px_dist),
-      (int)((float)img0pyr.at(0).rows / (float)min_px_dist)); // width x height
+      (int)((float)img0.width / (float)min_px_dist),
+      (int)((float)img0.height / (float)min_px_dist)); // width x height
   cv::Mat grid_2d_close = cv::Mat::zeros(size_close, CV_8UC1);
-  float size_x = (float)img0pyr.at(0).cols / (float)grid_x;
-  float size_y = (float)img0pyr.at(0).rows / (float)grid_y;
+  float size_x = (float)img0.width / (float)grid_x;
+  float size_y = (float)img0.height / (float)grid_y;
   cv::Size size_grid(grid_x, grid_y); // width x height
   cv::Mat grid_2d_grid = cv::Mat::zeros(size_grid, CV_8UC1);
   cv::Mat mask0_updated = mask0.clone();
@@ -478,8 +505,8 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
     int x = (int)kpt.pt.x;
     int y = (int)kpt.pt.y;
     int edge = 10;
-    if (x < edge || x >= img0pyr.at(0).cols - edge || y < edge ||
-        y >= img0pyr.at(0).rows - edge) {
+    if (x < edge || x >= img0.width - edge || y < edge ||
+        y >= img0.height - edge) {
       it0 = pts0.erase(it0);
       it1 = ids0.erase(it1);
       continue;
@@ -521,8 +548,8 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
       grid_2d_grid.at<uint8_t>(y_grid, x_grid) += 1;
     }
     // Append this to the local mask of the image
-    if (x - min_px_dist >= 0 && x + min_px_dist < img0pyr.at(0).cols &&
-        y - min_px_dist >= 0 && y + min_px_dist < img0pyr.at(0).rows) {
+    if (x - min_px_dist >= 0 && x + min_px_dist < img0.width &&
+        y - min_px_dist >= 0 && y + min_px_dist < img0.height) {
       cv::Point pt1(x - min_px_dist, y - min_px_dist);
       cv::Point pt2(x + min_px_dist, y + min_px_dist);
       cv::rectangle(mask0_updated, pt1, pt2, cv::Scalar(255), -1);
@@ -565,9 +592,9 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
     }
   }
   std::vector<cv::KeyPoint> pts0_ext;
-  Grider_GRID::perform_griding(img0pyr.at(0), mask0_updated, valid_locs,
-                               pts0_ext, num_features, grid_x, grid_y,
-                               threshold, true);
+  Grider_GRID::perform_griding(img0, mask0_updated, valid_locs, pts0_ext,
+                               num_features, grid_x, grid_y, threshold, true,
+                               backend->featureDetector());
 
   // Now, reject features that are close a current feature
   std::vector<cv::KeyPoint> kpts0_new;
@@ -606,22 +633,26 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
 }
 
 void TrackKLT::perform_detection_stereo(
-    const std::vector<cv::Mat> &img0pyr, const std::vector<cv::Mat> &img1pyr,
+    const vision::Pyramid &img0pyr, const vision::Pyramid &img1pyr,
     const cv::Mat &mask0, const cv::Mat &mask1, size_t cam_id_left,
     size_t cam_id_right, std::vector<cv::KeyPoint> &pts0,
     std::vector<cv::KeyPoint> &pts1, std::vector<size_t> &ids0,
     std::vector<size_t> &ids1) {
+
+  // The detection operates on the full resolution (first) pyramid level
+  const vision::Image &img0 = img0pyr.levels.at(0);
+  const vision::Image &img1 = img1pyr.levels.at(0);
 
   // Create a 2D occupancy grid for this current image
   // Note that we scale this down, so that each grid point is equal to a set of
   // pixels This means that we will reject points that less then grid_px_size
   // points away then existing features
   cv::Size size_close0(
-      (int)((float)img0pyr.at(0).cols / (float)min_px_dist),
-      (int)((float)img0pyr.at(0).rows / (float)min_px_dist)); // width x height
+      (int)((float)img0.width / (float)min_px_dist),
+      (int)((float)img0.height / (float)min_px_dist)); // width x height
   cv::Mat grid_2d_close0 = cv::Mat::zeros(size_close0, CV_8UC1);
-  float size_x0 = (float)img0pyr.at(0).cols / (float)grid_x;
-  float size_y0 = (float)img0pyr.at(0).rows / (float)grid_y;
+  float size_x0 = (float)img0.width / (float)grid_x;
+  float size_y0 = (float)img0.height / (float)grid_y;
   cv::Size size_grid0(grid_x, grid_y); // width x height
   cv::Mat grid_2d_grid0 = cv::Mat::zeros(size_grid0, CV_8UC1);
   cv::Mat mask0_updated = mask0.clone();
@@ -633,8 +664,8 @@ void TrackKLT::perform_detection_stereo(
     int x = (int)kpt.pt.x;
     int y = (int)kpt.pt.y;
     int edge = 10;
-    if (x < edge || x >= img0pyr.at(0).cols - edge || y < edge ||
-        y >= img0pyr.at(0).rows - edge) {
+    if (x < edge || x >= img0.width - edge || y < edge ||
+        y >= img0.height - edge) {
       it0 = pts0.erase(it0);
       it1 = ids0.erase(it1);
       continue;
@@ -676,8 +707,8 @@ void TrackKLT::perform_detection_stereo(
       grid_2d_grid0.at<uint8_t>(y_grid, x_grid) += 1;
     }
     // Append this to the local mask of the image
-    if (x - min_px_dist >= 0 && x + min_px_dist < img0pyr.at(0).cols &&
-        y - min_px_dist >= 0 && y + min_px_dist < img0pyr.at(0).rows) {
+    if (x - min_px_dist >= 0 && x + min_px_dist < img0.width &&
+        y - min_px_dist >= 0 && y + min_px_dist < img0.height) {
       cv::Point pt1(x - min_px_dist, y - min_px_dist);
       cv::Point pt2(x + min_px_dist, y + min_px_dist);
       cv::rectangle(mask0_updated, pt1, pt2, cv::Scalar(255), -1);
@@ -724,9 +755,9 @@ void TrackKLT::perform_detection_stereo(
       }
     }
     std::vector<cv::KeyPoint> pts0_ext;
-    Grider_GRID::perform_griding(img0pyr.at(0), mask0_updated, valid_locs,
-                                 pts0_ext, num_features, grid_x, grid_y,
-                                 threshold, true);
+    Grider_GRID::perform_griding(img0, mask0_updated, valid_locs, pts0_ext,
+                                 num_features, grid_x, grid_y, threshold, true,
+                                 backend->featureDetector());
 
     // Now, reject features that are close a current feature
     std::vector<cv::KeyPoint> kpts0_new;
@@ -767,25 +798,21 @@ void TrackKLT::perform_detection_stereo(
       std::vector<uchar> mask;
       // perform_matching(img0pyr, img1pyr, kpts0_new, kpts1_new, cam_id_left,
       // cam_id_right, mask);
-      std::vector<float> error;
-      cv::TermCriteria term_crit = cv::TermCriteria(
-          cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
-      cv::calcOpticalFlowPyrLK(img0pyr, img1pyr, pts0_new, pts1_new, mask,
-                               error, win_size, pyr_levels, term_crit,
-                               cv::OPTFLOW_USE_INITIAL_FLOW);
+      backend->pointTracker().track(img0pyr, img1pyr, pts0_new, pts1_new, mask,
+                                    win_size.width, pyr_levels);
 
       // Loop through and record only ones that are valid
       for (size_t i = 0; i < pts0_new.size(); i++) {
 
         // Check to see if the feature is out of bounds (oob) in either image
         bool oob_left = ((int)pts0_new.at(i).x < 0 ||
-                         (int)pts0_new.at(i).x >= img0pyr.at(0).cols ||
+                         (int)pts0_new.at(i).x >= img0.width ||
                          (int)pts0_new.at(i).y < 0 ||
-                         (int)pts0_new.at(i).y >= img0pyr.at(0).rows);
+                         (int)pts0_new.at(i).y >= img0.height);
         bool oob_right = ((int)pts1_new.at(i).x < 0 ||
-                          (int)pts1_new.at(i).x >= img1pyr.at(0).cols ||
+                          (int)pts1_new.at(i).x >= img1.width ||
                           (int)pts1_new.at(i).y < 0 ||
-                          (int)pts1_new.at(i).y >= img1pyr.at(0).rows);
+                          (int)pts1_new.at(i).y >= img1.height);
 
         // Check to see if it there is already a feature in the right image at
         // this location
@@ -824,11 +851,11 @@ void TrackKLT::perform_detection_stereo(
   // RIGHT: We will try to extract some monocular features if we have the room
   // RIGHT: This will also remove features if there are multiple in the same
   // location
-  cv::Size size_close1((int)((float)img1pyr.at(0).cols / (float)min_px_dist),
-                       (int)((float)img1pyr.at(0).rows / (float)min_px_dist));
+  cv::Size size_close1((int)((float)img1.width / (float)min_px_dist),
+                       (int)((float)img1.height / (float)min_px_dist));
   cv::Mat grid_2d_close1 = cv::Mat::zeros(size_close1, CV_8UC1);
-  float size_x1 = (float)img1pyr.at(0).cols / (float)grid_x;
-  float size_y1 = (float)img1pyr.at(0).rows / (float)grid_y;
+  float size_x1 = (float)img1.width / (float)grid_x;
+  float size_y1 = (float)img1.height / (float)grid_y;
   cv::Size size_grid1(grid_x, grid_y); // width x height
   cv::Mat grid_2d_grid1 = cv::Mat::zeros(size_grid1, CV_8UC1);
   cv::Mat mask1_updated = mask0.clone();
@@ -840,8 +867,8 @@ void TrackKLT::perform_detection_stereo(
     int x = (int)kpt.pt.x;
     int y = (int)kpt.pt.y;
     int edge = 10;
-    if (x < edge || x >= img1pyr.at(0).cols - edge || y < edge ||
-        y >= img1pyr.at(0).rows - edge) {
+    if (x < edge || x >= img1.width - edge || y < edge ||
+        y >= img1.height - edge) {
       it0 = pts1.erase(it0);
       it1 = ids1.erase(it1);
       continue;
@@ -887,8 +914,8 @@ void TrackKLT::perform_detection_stereo(
       grid_2d_grid1.at<uint8_t>(y_grid, x_grid) += 1;
     }
     // Append this to the local mask of the image
-    if (x - min_px_dist >= 0 && x + min_px_dist < img1pyr.at(0).cols &&
-        y - min_px_dist >= 0 && y + min_px_dist < img1pyr.at(0).rows) {
+    if (x - min_px_dist >= 0 && x + min_px_dist < img1.width &&
+        y - min_px_dist >= 0 && y + min_px_dist < img1.height) {
       cv::Point pt1(x - min_px_dist, y - min_px_dist);
       cv::Point pt2(x + min_px_dist, y + min_px_dist);
       cv::rectangle(mask1_updated, pt1, pt2, cv::Scalar(255), -1);
@@ -931,9 +958,9 @@ void TrackKLT::perform_detection_stereo(
       }
     }
     std::vector<cv::KeyPoint> pts1_ext;
-    Grider_GRID::perform_griding(img1pyr.at(0), mask1_updated, valid_locs,
-                                 pts1_ext, num_features, grid_x, grid_y,
-                                 threshold, true);
+    Grider_GRID::perform_griding(img1, mask1_updated, valid_locs, pts1_ext,
+                                 num_features, grid_x, grid_y, threshold, true,
+                                 backend->featureDetector());
 
     // Now, reject features that are close a current feature
     for (auto &kpt : pts1_ext) {
@@ -955,8 +982,8 @@ void TrackKLT::perform_detection_stereo(
   }
 }
 
-void TrackKLT::perform_matching(const std::vector<cv::Mat> &img0pyr,
-                                const std::vector<cv::Mat> &img1pyr,
+void TrackKLT::perform_matching(const vision::Pyramid &img0pyr,
+                                const vision::Pyramid &img1pyr,
                                 std::vector<cv::KeyPoint> &kpts0,
                                 std::vector<cv::KeyPoint> &kpts1, size_t id0,
                                 size_t id1, std::vector<uchar> &mask_out) {
@@ -983,14 +1010,10 @@ void TrackKLT::perform_matching(const std::vector<cv::Mat> &img0pyr,
     return;
   }
 
-  // Now do KLT tracking to get the valid new points
+  // Now do point tracking to get the valid new positions
   std::vector<uchar> mask_klt;
-  std::vector<float> error;
-  cv::TermCriteria term_crit = cv::TermCriteria(
-      cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
-  cv::calcOpticalFlowPyrLK(img0pyr, img1pyr, pts0, pts1, mask_klt, error,
-                           win_size, pyr_levels, term_crit,
-                           cv::OPTFLOW_USE_INITIAL_FLOW);
+  backend->pointTracker().track(img0pyr, img1pyr, pts0, pts1, mask_klt,
+                                win_size.width, pyr_levels);
 
   // Normalize these points, so we can then do ransac
   // We don't want to do ransac on distorted image uvs since the mapping is
@@ -1010,8 +1033,8 @@ void TrackKLT::perform_matching(const std::vector<cv::Mat> &img0pyr,
                                            camera_calib.at(id1)->get_K()(1, 1));
   DataType max_focallength =
       std::max(max_focallength_img0, max_focallength_img1);
-  cv::findFundamentalMat(pts0_n, pts1_n, cv::FM_RANSAC,
-                         ransac_thresh / max_focallength, 0.99, mask_rsc);
+  backend->twoViewRansac().reject(pts0_n, pts1_n, max_focallength,
+                                  ransac_thresh, 0.99, mask_rsc);
 
   // Loop through and record only ones that are valid
   for (size_t i = 0; i < mask_klt.size(); i++) {

@@ -38,6 +38,10 @@ list(APPEND thirdparty_libraries
         yaml-cpp
 )
 
+# Optional Ocean framework backend for the vision abstraction layer
+include(${CMAKE_SOURCE_DIR}/ov_core/cmake/OceanBackend.cmake)
+list(APPEND thirdparty_libraries ${OCEAN_LIBRARIES})
+
 
 # Manually link ov_core/ov_init
 message(STATUS "MANUALLY LINKING TO OV_CORE LIBRARY....")

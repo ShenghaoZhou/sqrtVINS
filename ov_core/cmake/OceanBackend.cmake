@@ -33,7 +33,7 @@ if (ENABLE_OCEAN_BACKEND)
     foreach (_ocean_module base cv cv_detector geometry math)
         find_library(OCEAN_${_ocean_module}_LIBRARY
                 NAMES ocean_${_ocean_module}
-                HINTS "${OCEAN_ROOT}/build" "${OCEAN_ROOT}/build/lib" "${OCEAN_ROOT}/lib"
+                HINTS "${OCEAN_ROOT}/install/lib" "${OCEAN_ROOT}/build/lib" "${OCEAN_ROOT}/build" "${OCEAN_ROOT}/lib"
                 NO_DEFAULT_PATH)
         if (OCEAN_${_ocean_module}_LIBRARY)
             list(APPEND OCEAN_LIBRARIES ${OCEAN_${_ocean_module}_LIBRARY})
@@ -54,6 +54,9 @@ if (ENABLE_OCEAN_BACKEND)
 
     add_definitions(-DOV_HAVE_OCEAN=1)
     include_directories(${OCEAN_INCLUDE_DIR})
+
+    # Ocean uses pthreads internally (e.g. the messenger singleton)
+    list(APPEND OCEAN_LIBRARIES pthread)
 
     # Ocean requires C++20; the SIMD paths of its headers benefit from SSE4.1
     set(OCEAN_BACKEND_SOURCES

@@ -9,11 +9,13 @@ sys.path.append(os.path.join(os.getcwd(), 'build/ov_srvins'))
 import ov_srvins_py as vins
 
 
-def run_vio(dataset_path, config_path, max_frames=1000):
+def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
     # 1. Setup options
     options = vins.VioManagerOptions()
     parser = vins.YamlParser(config_path)
     options.print_and_load(parser)
+    if cv_backend is not None:
+        options.cv_backend = cv_backend
 
     # 2. Initialize Estimator and Frontend
     estimator = vins.SqrtEstimator(options)
@@ -149,8 +151,9 @@ if __name__ == "__main__":
         "config/euroc_mav/estimator_config.yaml"
     out_csv = sys.argv[3] if len(sys.argv) > 3 else "/tmp/euroc_traj.csv"
     max_frames = int(sys.argv[4]) if len(sys.argv) > 4 else 1000
+    cv_backend = sys.argv[5] if len(sys.argv) > 5 else None
 
-    est_stamps, est_traj = run_vio(dataset_path, config_path, max_frames)
+    est_stamps, est_traj = run_vio(dataset_path, config_path, max_frames, cv_backend)
 
     if len(est_traj) == 0:
         print("VIO failed to produce any trajectory.")

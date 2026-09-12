@@ -12,20 +12,16 @@
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
  * version 3.0 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this program. If not, see
  * <https://www.gnu.org/licenses/>.
  */
-
-
-
-
 
 #ifndef OV_CORE_GRIDER_GRID_H
 #define OV_CORE_GRIDER_GRID_H
@@ -41,6 +37,9 @@
 
 #include "utils/DataType.h"
 #include "utils/opencv_lambda_body.h"
+#include "vision/CVBackend.h"
+#include "vision/OpenCvBackend.h"
+#include "vision/Types.h"
 
 namespace ov_core {
 
@@ -52,6 +51,10 @@ namespace ov_core {
  * Thus we split the image into a bunch of small grids, and extract points in
  * each. We then pick enough top points in each grid so that we have the total
  * number of desired points.
+ *
+ * The actual corner detection (and optional sub-pixel refinement) is
+ * delegated to a vision::FeatureDetector of the active CV backend, so this
+ * helper is backend-agnostic.
  */
 class Grider_GRID {
 
@@ -69,29 +72,32 @@ public:
   }
 
   /**
-   * @brief This function will perform grid extraction using FAST.
-   * @param img Image we will do FAST extraction on
+   * @brief This function will perform grid extraction using the feature
+   * detector of the given backend.
+   * @param img Image we will do the extraction on (level 0 of the pyramid)
    * @param mask Region of the image we do not want to extract features in (255
    * = do not detect features)
-   * @param valid_locs Valid 2d grid locations we will extract in (instead of
-   * the whole image)
+   * @param valid_locs grid cells (x,y grid indices) we should extract in
    * @param pts vector of extracted points we will return
    * @param num_features max number of features we want to extract
    * @param grid_x size of grid in the x-direction / u-direction
    * @param grid_y size of grid in the y-direction / v-direction
    * @param threshold FAST threshold paramter (10 is a good value normally)
-   * @param nonmaxSuppression if FAST should perform non-max suppression (true
-   * normally)
+   * @param nonmaxSuppression if the detector should perform non-max
+   * suppression (true normally; note that the Ocean backend always applies
+   * non-max suppression)
+   * @param detector feature detector operation of the active CV backend
    *
    * Given a specified grid size, this will try to extract fast features from
    * each grid. It will then return the best from each grid in the return
    * vector.
    */
   static void
-  perform_griding(const cv::Mat &img, const cv::Mat &mask,
+  perform_griding(const vision::Image &img, const cv::Mat &mask,
                   const std::vector<std::pair<int, int>> &valid_locs,
                   std::vector<cv::KeyPoint> &pts, int num_features, int grid_x,
-                  int grid_y, int threshold, bool nonmaxSuppression) {
+                  int grid_y, int threshold, bool nonmaxSuppression,
+                  vision::FeatureDetector &detector) {
 
     // Return if there is nothing to extract
     if (valid_locs.empty())
@@ -115,8 +121,8 @@ public:
     assert(num_features_grid > 0);
 
     // Calculate the size our extraction boxes should be
-    int size_x = img.cols / grid_x;
-    int size_y = img.rows / grid_y;
+    int size_x = img.width / grid_x;
+    int size_y = img.height / grid_y;
 
     // Make sure our sizes are not zero
     assert(size_x > 0);
@@ -135,23 +141,26 @@ public:
             int y = grid.second * size_y;
 
             // Skip if we are out of bounds
-            if (x + size_x > img.cols || y + size_y > img.rows)
+            if (x + size_x > img.width || y + size_y > img.height)
               continue;
 
             // Calculate where we should be extracting from
-            cv::Rect img_roi = cv::Rect(x, y, size_x, size_y);
+            vision::Image cell = img;
+            cell.data = img.data + (size_t)y * img.stride + (size_t)x;
+            cell.width = size_x;
+            cell.height = size_y;
 
-            // Extract FAST features for this part of the image
-            std::vector<cv::KeyPoint> pts_new;
-            cv::FAST(img(img_roi), pts_new, threshold, nonmaxSuppression);
-            // cv::AGAST(img(img_roi), pts_new, threshold, nonmaxSuppression);
-            // cv::Ptr<cv::GFTTDetector> detector =
-            // cv::GFTTDetector::create(num_features_grid, 0.01, 10.0);
-            // detector->detect(img(img_roi), pts_new);
+            // Extract features for this part of the image
+            std::vector<vision::Keypoint> pts_new =
+                detector.detect(cell, vision::Image(), threshold,
+                                nonmaxSuppression);
 
             // Now lets get the top number from this
             std::sort(pts_new.begin(), pts_new.end(),
-                      Grider_FAST::compare_response);
+                      [](const vision::Keypoint &first,
+                         const vision::Keypoint &second) {
+                        return first.response > second.response;
+                      });
 
             // Append the "best" ones to our vector
             // Note that we need to "correct" the point u,v since we extracted
@@ -161,13 +170,16 @@ public:
                  i < (size_t)num_features_grid && i < pts_new.size(); i++) {
 
               // Create keypoint
-              cv::KeyPoint pt_cor = pts_new.at(i);
-              pt_cor.pt.x += (float)x;
-              pt_cor.pt.y += (float)y;
+              cv::KeyPoint pt_cor;
+              pt_cor.pt.x = pts_new.at(i).x + (float)x;
+              pt_cor.pt.y = pts_new.at(i).y + (float)y;
+              pt_cor.response = pts_new.at(i).response;
+              pt_cor.size = pts_new.at(i).size;
+              pt_cor.octave = pts_new.at(i).octave;
 
               // Reject if out of bounds (shouldn't be possible...)
-              if ((int)pt_cor.pt.x < 0 || (int)pt_cor.pt.x > img.cols ||
-                  (int)pt_cor.pt.y < 0 || (int)pt_cor.pt.y > img.rows)
+              if ((int)pt_cor.pt.x < 0 || (int)pt_cor.pt.x > img.width ||
+                  (int)pt_cor.pt.y < 0 || (int)pt_cor.pt.y > img.height)
                 continue;
 
               // Check if it is in the mask region
@@ -188,25 +200,35 @@ public:
     if (pts.empty())
       return;
 
-    // Sub-pixel refinement parameters
-    cv::Size win_size = cv::Size(5, 5);
-    cv::Size zero_zone = cv::Size(-1, -1);
-    cv::TermCriteria term_crit = cv::TermCriteria(
-        cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 20, 0.001);
-
     // Get vector of points
     std::vector<cv::Point2f> pts_refined;
     for (size_t i = 0; i < pts.size(); i++) {
       pts_refined.push_back(pts.at(i).pt);
     }
 
-    // Finally get sub-pixel for all extracted features
-    cv::cornerSubPix(img, pts_refined, win_size, zero_zone, term_crit);
-
-    // Save the refined points!
-    for (size_t i = 0; i < pts.size(); i++) {
-      pts.at(i).pt = pts_refined.at(i);
+    // Finally get sub-pixel for all extracted features (if the backend
+    // supports it; otherwise the integer positions are kept)
+    if (detector.refineSubpix(img, pts_refined, 5, 20, 0.001)) {
+      // Save the refined points!
+      for (size_t i = 0; i < pts.size(); i++) {
+        pts.at(i).pt = pts_refined.at(i);
+      }
     }
+  }
+
+  /**
+   * @brief Legacy OpenCV convenience overload (uses the OpenCV backend).
+   */
+  static void
+  perform_griding(const cv::Mat &img, const cv::Mat &mask,
+                  const std::vector<std::pair<int, int>> &valid_locs,
+                  std::vector<cv::KeyPoint> &pts, int num_features, int grid_x,
+                  int grid_y, int threshold, bool nonmaxSuppression) {
+    static std::shared_ptr<vision::CVBackend> backend =
+        vision::CVBackend::create("opencv");
+    perform_griding(vision::Image::fromCv(img), mask, valid_locs, pts,
+                    num_features, grid_x, grid_y, threshold, nonmaxSuppression,
+                    backend->featureDetector());
   }
 };
 

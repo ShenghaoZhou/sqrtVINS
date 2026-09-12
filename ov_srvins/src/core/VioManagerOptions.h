@@ -240,6 +240,11 @@ struct VioManagerOptions {
   /// RANSAC threshold for our KLT tracker
   double ransac_th = 1.0;
 
+  /// Which backend implements the core computer vision operations of the
+  /// KLT front-end ("opencv" for the traditional OpenCV implementation, or
+  /// "ocean" for the implementation based on the Ocean framework)
+  std::string cv_backend = "opencv";
+
   /// What type of pre-processing histogram method should be applied to images
   ov_core::TrackBase::HistogramMethod histogram_method =
       ov_core::TrackBase::HistogramMethod::HISTOGRAM;

@@ -31,6 +31,7 @@
 #define OV_CORE_TRACK_KLT_H
 
 #include "TrackBase.h"
+#include "vision/CVBackend.h"
 
 namespace ov_core {
 
@@ -41,9 +42,10 @@ namespace ov_core {
  * features. We can track either monocular cameras across time (temporally)
  * along with stereo cameras which we also track across time (temporally) but
  * track from left to right to find the stereo correspondence information also.
- * This uses the
- * [calcOpticalFlowPyrLK](https://github.com/opencv/opencv/blob/master/modules/video/src/lkpyramid.cpp)
- * OpenCV function to do the KLT tracking.
+ * The actual computer vision operations (point tracking, detection, two-view
+ * outlier rejection, image pre-processing) are delegated to a
+ * vision::CVBackend so they can be provided by e.g. the traditional OpenCV
+ * implementation or one built on the Ocean framework.
  */
 class TrackKLT : public TrackBase {
 
@@ -64,15 +66,20 @@ public:
    * @param gridy size of grid in the y-direction / v-direction
    * @param minpxdist features need to be at least this number pixels away from
    * each other
+   * @param ransacth RANSAC threshold for the two-view outlier rejection
+   * @param cvbackend the CV backend providing the vision operations (nullptr
+   * selects the default traditional OpenCV backend)
    */
   explicit TrackKLT(
       std::unordered_map<size_t, std::shared_ptr<CamBase>> cameras,
       int numfeats, int numaruco, bool stereo, HistogramMethod histmethod,
       int fast_threshold, int gridx, int gridy, int minpxdist,
-      DataType ransacth)
+      DataType ransacth,
+      std::shared_ptr<vision::CVBackend> cvbackend = nullptr)
       : TrackBase(cameras, numfeats, numaruco, stereo, histmethod),
         threshold(fast_threshold), grid_x(gridx), grid_y(gridy),
-        min_px_dist(minpxdist), ransac_thresh(ransacth) {}
+        min_px_dist(minpxdist), ransac_thresh(ransacth),
+        backend(cvbackend ? cvbackend : vision::CVBackend::create("opencv")) {}
 
   /**
    * @brief Process a new image
@@ -109,7 +116,7 @@ protected:
    * tracked through KLT at each timestep. Passed images should already be
    * grayscaled.
    */
-  void perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
+  void perform_detection_monocular(const vision::Pyramid &img0pyr,
                                    const cv::Mat &mask0,
                                    std::vector<cv::KeyPoint> &pts0,
                                    std::vector<size_t> &ids0);
@@ -138,8 +145,8 @@ protected:
    * image. Will try to always have the "max_features" being tracked through KLT
    * at each timestep.
    */
-  void perform_detection_stereo(const std::vector<cv::Mat> &img0pyr,
-                                const std::vector<cv::Mat> &img1pyr,
+  void perform_detection_stereo(const vision::Pyramid &img0pyr,
+                                const vision::Pyramid &img1pyr,
                                 const cv::Mat &mask0, const cv::Mat &mask1,
                                 size_t cam_id_left, size_t cam_id_right,
                                 std::vector<cv::KeyPoint> &pts0,
@@ -163,11 +170,18 @@ protected:
    * will be used as an initial guess of where the keypoints are in the second
    * image.
    */
-  void perform_matching(const std::vector<cv::Mat> &img0pyr,
-                        const std::vector<cv::Mat> &img1pyr,
+  void perform_matching(const vision::Pyramid &img0pyr,
+                        const vision::Pyramid &img1pyr,
                         std::vector<cv::KeyPoint> &pts0,
                         std::vector<cv::KeyPoint> &pts1, size_t id0, size_t id1,
                         std::vector<uchar> &mask_out);
+
+  /// CV backend providing the core vision operations (tracking, detection,
+  /// two-view RANSAC, image pre-processing)
+  std::shared_ptr<vision::CVBackend> backend;
+
+  /// Whether we already warned that the selected backend lacks CLAHE support
+  bool warned_clahe_unsupported = false;
 
   // Parameters for our FAST grid detector
   int threshold;
@@ -184,9 +198,9 @@ protected:
   DataType ransac_thresh = 0.5;
 
   // Last set of image pyramids
-  std::map<size_t, std::vector<cv::Mat>> img_pyramid_last;
+  std::map<size_t, vision::Pyramid> img_pyramid_last;
   std::map<size_t, cv::Mat> img_curr;
-  std::map<size_t, std::vector<cv::Mat>> img_pyramid_curr;
+  std::map<size_t, vision::Pyramid> img_pyramid_curr;
 };
 
 } // namespace ov_core

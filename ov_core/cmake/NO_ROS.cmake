@@ -13,6 +13,10 @@ if (USE_FLOAT)
     add_definitions(-DUSE_FLOAT=1)
 endif ()
 
+# Optional Ocean framework backend for the vision abstraction layer
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/OceanBackend.cmake)
+list(APPEND thirdparty_libraries ${OCEAN_LIBRARIES})
+
 # Include our header files
 include_directories(
         src
@@ -42,6 +46,9 @@ list(APPEND LIBRARY_SOURCES
         src/feat/FeatureDatabase.cpp
         src/feat/FeatureInitializer.cpp
         src/utils/print.cpp
+        src/vision/CVBackend.cpp
+        src/vision/OpenCvBackend.cpp
+        src/vision/OceanBackend.cpp
 )
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_core_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})

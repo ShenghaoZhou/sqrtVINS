@@ -76,7 +76,8 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readwrite("zupt_max_velocity", &VioManagerOptions::zupt_max_velocity)
         .def_readwrite("num_pts", &VioManagerOptions::num_pts)
         .def_readwrite("use_mask", &VioManagerOptions::use_mask)
-        .def_readwrite("num_opencv_threads", &VioManagerOptions::num_opencv_threads);
+        .def_readwrite("num_opencv_threads", &VioManagerOptions::num_opencv_threads)
+        .def_readwrite("cv_backend", &VioManagerOptions::cv_backend);
 
     py::class_<NoiseManager>(m, "NoiseManager")
         .def(py::init<>())

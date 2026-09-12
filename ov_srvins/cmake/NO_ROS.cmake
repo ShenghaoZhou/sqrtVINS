@@ -93,6 +93,10 @@ list(APPEND LIBRARY_SOURCES
 
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
+
+# C++ dataset runner
+add_executable(run_euroc src/run_euroc.cpp)
+target_link_libraries(run_euroc ov_srvins_lib ${thirdparty_libraries})
 target_link_libraries(ov_srvins_lib ${thirdparty_libraries})
 target_include_directories(ov_srvins_lib PUBLIC src/)
 install(TARGETS ov_srvins_lib

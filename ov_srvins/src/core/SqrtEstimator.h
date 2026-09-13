@@ -95,12 +95,11 @@ public:
    * @brief Perform the full state update with visual features
    * @param message Camera data
    * @param featsup_MSCKF MSCKF features
-   * @param feats_slam_UPDATE SLAM features for update
-   * @param feats_slam_DELAYED SLAM features for delayed initialization
+   * @param feats_slam SLAM features (separated into update and delayed-init
+   * sets internally, after marginalize_slam - matching VioManager ordering)
    */
   void update(std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
-              std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
-              std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
+              std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam);
 
   /**
    * @brief Set the feature database for ZUPT updates

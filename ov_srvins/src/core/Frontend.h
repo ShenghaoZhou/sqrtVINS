@@ -46,11 +46,13 @@ public:
 
   void feed_camera(ov_core::CameraData &message);
 
+  // NOTE: feats_slam is NOT yet separated into UPDATE/DELAYED - the split
+  // must happen after StateHelper::marginalize_slam (inside the estimator
+  // update), matching VioManager/open_vins ordering
   void process_measurements_rules(
       double timestamp, const std::vector<int> &sensor_ids,
       std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
-      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
-      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED);
+      std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam);
 
   std::shared_ptr<ov_core::TrackBase> get_trackFEATS() { return trackFEATS; }
   std::shared_ptr<ov_core::TrackBase> get_trackARUCO() { return trackARUCO; }

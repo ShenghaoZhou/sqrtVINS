@@ -87,14 +87,16 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
 }
 
 void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
+  // Do not trim before initialization: the static initializer is sensitive to
+  // the amount of IMU history available in its selection window
+  if (!state->is_initialized) {
+    feed_imu(message, -1);
+    return;
+  }
   // The oldest time we need IMU with is the last clone
   double oldest_time = state->margtimestep();
   if (oldest_time > state->timestamp) {
     oldest_time = -1;
-  }
-  if (!state->is_initialized) {
-    oldest_time = message.timestamp - params.init_options.init_window_time +
-                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
   }
   feed_imu(message, oldest_time);
 }
@@ -105,15 +107,14 @@ void SqrtEstimator::feed_imu_batch(
     return;
   }
   // The buffer trim time only changes on propagation (new clones), not on
-  // feeding, so computing it once for the batch is equivalent to per-message
-  double oldest_time = state->margtimestep();
-  if (oldest_time > state->timestamp) {
-    oldest_time = -1;
-  }
-  if (!state->is_initialized) {
-    oldest_time = messages.front().timestamp -
-                  params.init_options.init_window_time +
-                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
+  // feeding, so computing it once for the batch is equivalent to per-message.
+  // Like feed_measurement_imu, no trimming before initialization.
+  double oldest_time = -1;
+  if (state->is_initialized) {
+    oldest_time = state->margtimestep();
+    if (oldest_time > state->timestamp) {
+      oldest_time = -1;
+    }
   }
   for (const auto &message : messages) {
     feed_imu(message, oldest_time);
@@ -193,8 +194,7 @@ bool SqrtEstimator::propagate(double timestamp) {
 
 void SqrtEstimator::update(
     std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
-    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
-    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED) {
+    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam) {
 
   // First do anchor change if we are about to lose an anchor pose
   state->calculate_clone_poses();
@@ -204,6 +204,19 @@ void SqrtEstimator::update(
 
   // Handle marginalization of old clone and features
   handle_marginalization();
+
+  // Separate our SLAM features into new ones, and old ones
+  // NOTE: this must happen AFTER marginalize_slam (in handle_marginalization)
+  // so that landmarks just marginalized fall into the delayed-init set instead
+  // of referencing a missing landmark in the update
+  std::vector<std::shared_ptr<ov_core::Feature>> feats_slam_UPDATE,
+      feats_slam_DELAYED;
+  for (auto const &f : feats_slam) {
+    if (state->features_SLAM.find(f->featid) != state->features_SLAM.end())
+      feats_slam_UPDATE.push_back(f);
+    else
+      feats_slam_DELAYED.push_back(f);
+  }
 
   // Perform the actual updates
   state->setup_matrix_buffer();

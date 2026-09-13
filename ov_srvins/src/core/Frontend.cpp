@@ -107,11 +107,10 @@ void Frontend::feed_camera(ov_core::CameraData &message) {
 void Frontend::process_measurements_rules(
     double timestamp, const std::vector<int> &sensor_ids,
     std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
-    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_UPDATE,
-    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam_DELAYED) {
+    std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam) {
 
   std::vector<std::shared_ptr<Feature>> feats_lost, feats_marg, feats_maxtracks;
-  std::vector<std::shared_ptr<Feature>> feats_slam;
+  feats_slam.clear();
   feats_lost =
       trackFEATS->get_feature_database()->features_not_containing_newer(
           state->timestamp, false, true);
@@ -212,13 +211,6 @@ void Frontend::process_measurements_rules(
       landmark.second->should_marg = true;
   }
 
-  for (auto const &f : feats_slam) {
-    if (state->features_SLAM.find(f->featid) != state->features_SLAM.end())
-      feats_slam_UPDATE.push_back(f);
-    else
-      feats_slam_DELAYED.push_back(f);
-  }
-
   featsup_MSCKF = feats_lost;
   featsup_MSCKF.insert(featsup_MSCKF.end(), feats_marg.begin(),
                        feats_marg.end());
@@ -240,6 +232,8 @@ void Frontend::process_measurements_rules(
     featsup_MSCKF.erase(featsup_MSCKF.begin(),
                         featsup_MSCKF.end() -
                             state->options.max_msckf_in_update);
+
+
 }
 
 cv::Mat Frontend::get_historical_viz_image(bool did_zupt, bool is_init) {

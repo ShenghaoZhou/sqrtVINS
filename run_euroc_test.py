@@ -106,7 +106,7 @@ def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
 
             # Check for initialization
             if not state.is_initialized:
-                if initializer.initialize(state, False):
+                if initializer.initialize(state, not options.try_zupt):
                     print(f"VIO Initialized at {curr_cam_time}!")
                     frontend.set_startup_time(curr_cam_time)
                     frontend.get_trackFEATS().get_feature_database().cleanup_measurements(state.timestamp)

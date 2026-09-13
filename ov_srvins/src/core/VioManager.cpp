@@ -191,26 +191,31 @@ void VioManager::do_feature_propagate_update(
   }
   has_moved_since_zupt = true;
 
-  // Cleanup old measurements from database
-  if ((int)state->clones_IMU.size() > state->options.max_clone_size + 1) {
-    frontend->get_trackFEATS()->get_feature_database()->cleanup_measurements(
-        state->margtimestep());
-    if (frontend->get_trackARUCO() != nullptr) {
-      frontend->get_trackARUCO()->get_feature_database()->cleanup_measurements(
-          state->margtimestep());
-    }
-  }
+  // Capture the marginalization time and cleanup gate BEFORE the update: the
+  // update marginalizes the clone at this time, so measurements up to it can
+  // be dropped only AFTER selection has used them
+  bool do_cleanup =
+      (int)state->clones_IMU.size() > state->options.max_clone_size + 1;
+  double marg_time = state->margtimestep();
 
   // Sorting features according to rules
-  std::vector<std::shared_ptr<Feature>> feats_slam_DELAYED, feats_slam_UPDATE,
-      featsup_MSCKF;
+  std::vector<std::shared_ptr<Feature>> feats_slam, featsup_MSCKF;
   frontend->process_measurements_rules(message.timestamp, message.sensor_ids,
-                                       featsup_MSCKF, feats_slam_UPDATE,
-                                       feats_slam_DELAYED);
+                                       featsup_MSCKF, feats_slam);
 
   // Estimator update
   rT4 = std::chrono::steady_clock::now(); // Timing for stats
-  estimator->update(featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
+  estimator->update(featsup_MSCKF, feats_slam);
+
+  // Cleanup measurements at the pre-update marginalization time
+  if (do_cleanup) {
+    frontend->get_trackFEATS()->get_feature_database()->cleanup_measurements(
+        marg_time);
+    if (frontend->get_trackARUCO() != nullptr) {
+      frontend->get_trackARUCO()->get_feature_database()->cleanup_measurements(
+          marg_time);
+    }
+  }
 
   // Timing points for stats (mirrored from VioManager for now)
   // We can refine this by making estimator return timing info

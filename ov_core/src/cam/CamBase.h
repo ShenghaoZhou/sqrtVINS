@@ -97,6 +97,46 @@ public:
    */
   virtual Vec2 undistort(const Vec2 &uv_dist) = 0;
 
+  /**
+   * @brief Given a raw uv point, this will undistort it based on the camera
+   * matrices into normalized camera coords (double interface, intrinsics are
+   * stored in the active DataType).
+   * @param uv_dist Raw uv coordinate we wish to undistort
+   * @return 2d vector of normalized coordinates
+   */
+  Eigen::Vector2d undistort_d(const Eigen::Vector2d &uv_dist) {
+    return undistort(uv_dist.cast<DataType>()).cast<double>();
+  }
+
+  /**
+   * @brief Given a normalized uv coordinate this will distort it to the raw
+   * image plane (double interface, intrinsics are stored in the active
+   * DataType).
+   * @param uv_norm Normalized coordinates we wish to distort
+   * @return 2d vector of raw uv coordinate
+   */
+  Eigen::Vector2d distort_d(const Eigen::Vector2d &uv_norm) {
+    return distort(uv_norm.cast<DataType>()).cast<double>();
+  }
+
+  /**
+   * @brief Given a raw uv point, this will undistort it based on the camera
+   * matrices into normalized camera coords (cv interface).
+   */
+  cv::Point2f undistort_cv(const cv::Point2f &uv_dist) {
+    Vec2 ept = undistort(Vec2(uv_dist.x, uv_dist.y));
+    return cv::Point2f(ept(0), ept(1));
+  }
+
+  /**
+   * @brief Given a normalized uv coordinate this will distort it to the raw
+   * image plane (cv interface).
+   */
+  cv::Point2f distort_cv(const cv::Point2f &uv_norm) {
+    Vec2 ept = distort(Vec2(uv_norm.x, uv_norm.y));
+    return cv::Point2f(ept(0), ept(1));
+  }
+
   // /**
   //  * @brief Given a raw uv point, this will undistort it based on the camera
   //  * matrices into normalized camera coords.

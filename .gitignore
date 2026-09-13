@@ -13,3 +13,7 @@ __pycache__
 .pixi/*
 !.pixi/config.toml
 .cache/
+
+# standalone reference checkout + vendored Ocean SDK (kept out of repo)
+open_vins_ori/
+third_party/

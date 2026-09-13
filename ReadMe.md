@@ -20,6 +20,35 @@ Key highlights of ${\sqrt{\rm VINS}}$ include:
 🚀 Dynamic initialization – recovers minimal states without triangulating 3D features, enabling reliable startup even in extreme conditions (as small as a 100 ms time window).
 
 
+## Dual-Formulation Support (SqrtVINS / Original OpenVINS)
+
+This consolidated codebase contains BOTH filter formulations in a single build, sharing one `ov_core`:
+
+| Module | Formulation |
+|---|---|
+| `ov_srvins` | SqrtVINS square-root EKF (this project) |
+| `ov_msckf` + `ov_init` | Original OpenVINS full-covariance EKF (ported non-ROS core) |
+
+Both are selected with a flag on the unified EuRoC runner:
+
+```shell
+# Build (pixi environment; Ceres/Boost come from the env configured via CMAKE_PREFIX_PATH)
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$PIXI_ENV;$CERES_ENV"
+ninja -C build run_euroc ov_srvins_py
+
+# SqrtVINS formulation (default)
+build/ov_srvins/run_euroc <dataset> config/euroc_mav/estimator_config.yaml out_sqrt.csv
+
+# Original OpenVINS full-covariance formulation
+build/ov_srvins/run_euroc <dataset> config/euroc_mav/estimator_config_full.yaml out_full.csv --estimator full
+```
+
+Notes:
+- `--estimator sqrt|full` (aliases `--sqrt` / `--full`, or `--estimator=<value>`) selects the formulation; the default is `sqrt`.
+- The two formulations are tuned differently: `estimator_config.yaml` carries the sqrt tuning, while `estimator_config_full.yaml` carries the upstream OpenVINS init/update tuning (e.g. `init_window_time`, `dt_slam_delay`).
+- In Python, the same module exposes both: `SqrtEstimator` / `Frontend` (sqrt, orchestrated manually) and `FullVioManager` (self-contained, like upstream `VioManager`).
+- The formulation-specific sources live in separate translation units (`run_euroc_sqrt.cpp` / `run_euroc_full.cpp`, `pybind_full.cpp`) because the two modules expose colliding header paths.
+
 ## Dependences
 * ROS
 * Eigen

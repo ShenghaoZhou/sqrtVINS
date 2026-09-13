@@ -49,6 +49,7 @@ public:
     ANCHORED_3D,
     ANCHORED_FULL_INVERSE_DEPTH,
     ANCHORED_MSCKF_INVERSE_DEPTH,
+    ANCHORED_INVERSE_DEPTH_SINGLE,
     UNKNOWN
   };
 
@@ -69,6 +70,8 @@ public:
       return "ANCHORED_FULL_INVERSE_DEPTH";
     if (feat_representation == ANCHORED_MSCKF_INVERSE_DEPTH)
       return "ANCHORED_MSCKF_INVERSE_DEPTH";
+    if (feat_representation == ANCHORED_INVERSE_DEPTH_SINGLE)
+      return "ANCHORED_INVERSE_DEPTH_SINGLE";
     return "UNKNOWN";
   }
 
@@ -90,6 +93,8 @@ public:
       return ANCHORED_FULL_INVERSE_DEPTH;
     if (feat_representation == "ANCHORED_MSCKF_INVERSE_DEPTH")
       return ANCHORED_MSCKF_INVERSE_DEPTH;
+    if (feat_representation == "ANCHORED_INVERSE_DEPTH_SINGLE")
+      return ANCHORED_INVERSE_DEPTH_SINGLE;
     return UNKNOWN;
   }
 
@@ -104,7 +109,8 @@ public:
     return (
         feat_representation == Representation::ANCHORED_3D ||
         feat_representation == Representation::ANCHORED_FULL_INVERSE_DEPTH ||
-        feat_representation == Representation::ANCHORED_MSCKF_INVERSE_DEPTH);
+        feat_representation == Representation::ANCHORED_MSCKF_INVERSE_DEPTH ||
+        feat_representation == Representation::ANCHORED_INVERSE_DEPTH_SINGLE);
   }
 
 private:

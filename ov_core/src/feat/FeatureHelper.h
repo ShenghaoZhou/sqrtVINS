@@ -122,6 +122,82 @@ public:
   }
 
   /**
+   * @brief Compute the disparity over a TIME WINDOW (upstream OpenVINS
+   * semantics): for each feature, uses its first observation after
+   * oldest_time and its first observation before newest_time. Used by the
+   * full-covariance (ov_init) static initializer. The exact-timestamp
+   * overload above is used by the sqrt ZUPT updater.
+   * @param db Feature database to compute disparity over
+   * @param disp_mean Average raw disparity
+   * @param disp_var Variance of the disparities
+   * @param total_feats Total number of common features
+   * @param newest_time Only compute disparity for ones older (-1 to disable)
+   * @param oldest_time Only compute disparity for ones newer (-1 to disable)
+   */
+  static void
+  compute_disparity_window(std::shared_ptr<ov_core::FeatureDatabase> db,
+                           DataType &disp_mean, DataType &disp_var,
+                           int &total_feats, double newest_time = -1,
+                           double oldest_time = -1) {
+
+    // Compute the disparity
+    std::vector<DataType> disparities;
+    for (auto &feat : db->get_internal_data()) {
+      for (auto &campairs : feat.second->timestamps) {
+
+        // Skip if only one observation
+        if (campairs.second.size() < 2)
+          continue;
+
+        // Now lets calculate the disparity (assumes time array is monotonic)
+        size_t camid = campairs.first;
+        bool found0 = false;
+        bool found1 = false;
+        Vec2 uv0 = Vec2::Zero();
+        Vec2 uv1 = Vec2::Zero();
+        for (size_t idx = 0; idx < feat.second->timestamps.at(camid).size(); idx++) {
+          double time = feat.second->timestamps.at(camid).at(idx);
+          if ((oldest_time == -1 || time > oldest_time) && !found0) {
+            uv0 = feat.second->uvs.at(camid).at(idx);
+            found0 = true;
+            continue;
+          }
+          if ((newest_time == -1 || time < newest_time) && found0) {
+            uv1 = feat.second->uvs.at(camid).at(idx);
+            found1 = true;
+            continue;
+          }
+        }
+
+        // If we found both an old and a new time, then we are good!
+        if (!found0 || !found1)
+          continue;
+        disparities.push_back((uv1 - uv0).norm());
+      }
+    }
+
+    // If no disparities, just return
+    if (disparities.size() < 2) {
+      disp_mean = -1;
+      disp_var = -1;
+      total_feats = 0;
+      return;
+    }
+
+    // Compute mean and standard deviation in respect to it
+    disp_mean = 0;
+    for (auto &disparity : disparities)
+      disp_mean += disparity;
+    disp_mean /= (DataType)disparities.size();
+    disp_var = 0;
+    for (auto &disparity : disparities)
+      disp_var += std::pow(disparity - disp_mean, 2);
+    disp_var /= (DataType)(disparities.size() - 1);
+    disp_var = std::sqrt(disp_var);
+    total_feats = (int)disparities.size();
+  }
+
+  /**
    * @brief This functions will compute the disparity over all features we have
    *
    * NOTE: this is on the RAW coordinates of the feature not the normalized

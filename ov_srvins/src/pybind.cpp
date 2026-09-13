@@ -22,6 +22,10 @@ namespace py = pybind11;
 using namespace ov_srvins;
 using namespace ov_core;
 
+// Defined in ov_msckf/src/pybind_full.cpp (full-covariance system bindings,
+// compiled in a separate TU with its module's include dirs pinned)
+void bind_full_system(pybind11::module_ &m);
+
 PYBIND11_MODULE(ov_srvins_py, m) {
     m.doc() = "Sqrt-VINS Python Bindings";
 
@@ -99,6 +103,8 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readonly("timestamp", &State::timestamp)
         .def_readonly("imu", &State::imu)
         .def_readonly("is_initialized", &State::is_initialized)
+        .def("margtimestep", &State::margtimestep)
+        .def("num_clones", [](const State &s) { return (int)s.clones_IMU.size(); })
         .def("clear", &State::clear, py::arg("fully") = false);
 
     py::class_<Feature, std::shared_ptr<Feature>>(m, "Feature")
@@ -146,10 +152,15 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def("propagate_and_update",
              [](SqrtEstimator &self, Frontend &frontend, double timestamp,
                 const std::vector<int> &sensor_ids) {
-               // Mirrors VioManager::do_feature_propagate_update: propagate,
-               // select features, update, and clean the tracker databases -
-               // all inside a single Python->C++ call with no feature
-               // list round-trip
+               // Mirrors the validated VioManager sequence: propagate,
+               // select features against the post-propagation state, update,
+               // then clean the tracker databases - all inside a single
+               // Python->C++ call with no feature list round-trip.
+               // NOTE: cleanup_measurements must use the margtimestep
+               // captured BEFORE the update (the clone marginalized by the
+               // update) and run only AFTER feature selection; cleaning at
+               // the same timestep selection queries starves the MSCKF/SLAM
+               // update of measurements and corrupts the filter
                auto state = self.get_state();
                if (!self.propagate(timestamp))
                  return false;
@@ -159,16 +170,19 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                  return false;
                if (state->timestamp != timestamp)
                  return false;
-               if ((int)state->clones_IMU.size() >
-                   state->options.max_clone_size + 1) {
-                 frontend.get_trackFEATS()->get_feature_database()->cleanup_measurements(state->margtimestep());
+               bool do_cleanup = (int)state->clones_IMU.size() >
+                                 state->options.max_clone_size + 1;
+               double marg_time = state->margtimestep();
+               std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF, feats_slam;
+               frontend.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam);
+               self.update(featsup_MSCKF, feats_slam);
+               auto feats_db = frontend.get_trackFEATS()->get_feature_database();
+               if (do_cleanup) {
+                 feats_db->cleanup_measurements(marg_time);
                  if (frontend.get_trackARUCO() != nullptr)
-                   frontend.get_trackARUCO()->get_feature_database()->cleanup_measurements(state->margtimestep());
+                   frontend.get_trackARUCO()->get_feature_database()->cleanup_measurements(marg_time);
                }
-               std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED;
-               frontend.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
-               self.update(featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
-               frontend.get_trackFEATS()->get_feature_database()->cleanup();
+               feats_db->cleanup();
                if (frontend.get_trackARUCO() != nullptr)
                  frontend.get_trackARUCO()->get_feature_database()->cleanup();
                return true;
@@ -191,10 +205,9 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def("get_trackFEATS", &Frontend::get_trackFEATS)
         .def("process_measurements_rules", [](Frontend &self, double timestamp, const std::vector<int> &sensor_ids) {
             std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF;
-            std::vector<std::shared_ptr<ov_core::Feature>> feats_slam_UPDATE;
-            std::vector<std::shared_ptr<ov_core::Feature>> feats_slam_DELAYED;
-            self.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
-            return std::make_tuple(featsup_MSCKF, feats_slam_UPDATE, feats_slam_DELAYED);
+            std::vector<std::shared_ptr<ov_core::Feature>> feats_slam;
+            self.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam);
+            return std::make_tuple(featsup_MSCKF, feats_slam);
         })
         .def("set_startup_time", &Frontend::set_startup_time);
 
@@ -204,4 +217,7 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                       std::shared_ptr<ov_srvins::Propagator>, const UpdaterOptions &, const UpdaterOptions &, 
                       const ov_core::FeatureInitializerOptions &>())
         .def("initialize", &InertialInitializer::initialize);
+
+    // Bind the original OpenVINS (full-covariance) system
+    bind_full_system(m);
 }

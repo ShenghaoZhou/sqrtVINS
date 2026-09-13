@@ -31,6 +31,7 @@
 #define OV_TYPE_TYPE_LANDMARK_H
 
 #include "LandmarkRepresentation.h"
+#include <cassert>
 #include "Vec.h"
 #include "utils/colors.h"
 #include "utils/print.h"
@@ -63,6 +64,10 @@ public:
 
   /// Timestamp of anchor clone
   double anchor_clone_timestamp = -1;
+
+  /// Boolean if this feature has had its anchor changed (used by the
+  /// full-covariance MSCKF updater to force an anchor change)
+  bool has_had_anchor_change = false;
 
   /// Boolean if this landmark should be marginalized out
   bool should_marg = false;

@@ -9,4 +9,6 @@ if(CCACHE_PROGRAM)
 endif()
 
 add_subdirectory(ov_core)
+add_subdirectory(ov_init)
+add_subdirectory(ov_msckf)
 add_subdirectory(ov_srvins)

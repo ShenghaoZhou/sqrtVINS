@@ -31,6 +31,7 @@
 #define OV_TYPE_TYPE_BASE_H
 
 #include "utils/DataType.h"
+#include <cassert>
 #include <Eigen/Eigen>
 #include <memory>
 

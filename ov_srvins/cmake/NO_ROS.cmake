@@ -43,18 +43,9 @@ include(${CMAKE_SOURCE_DIR}/ov_core/cmake/OceanBackend.cmake)
 list(APPEND thirdparty_libraries ${OCEAN_LIBRARIES})
 
 
-# Manually link ov_core/ov_init
-message(STATUS "MANUALLY LINKING TO OV_CORE LIBRARY....")
-include_directories(${CMAKE_SOURCE_DIR}/ov_core/src/)
-file(GLOB_RECURSE OVCORE_LIBRARY_SOURCES "${CMAKE_SOURCE_DIR}/ov_core/src/*.cpp")
-# Filter out mains
-list(FILTER OVCORE_LIBRARY_SOURCES EXCLUDE REGEX ".*test_webcam\\.cpp$")
-list(FILTER OVCORE_LIBRARY_SOURCES EXCLUDE REGEX ".*test_tracking\\.cpp$")
-list(FILTER OVCORE_LIBRARY_SOURCES EXCLUDE REGEX ".*test_profile\\.cpp$")
-list(FILTER OVCORE_LIBRARY_SOURCES EXCLUDE REGEX ".*dummy\\.cpp$")
-list(APPEND LIBRARY_SOURCES ${OVCORE_LIBRARY_SOURCES})
-file(GLOB_RECURSE OVCORE_LIBRARY_HEADERS "${CMAKE_SOURCE_DIR}/ov_core/src/*.h")
-list(APPEND LIBRARY_HEADERS ${OVCORE_LIBRARY_HEADERS})
+# Link against the shared ov_core / ov_init / ov_msckf libraries
+message(STATUS "LINKING TO OV_CORE / OV_INIT / OV_MSCKF LIBRARIES....")
+list(APPEND thirdparty_libraries ov_core_lib ov_init_lib ov_msckf_lib)
 
 
 
@@ -94,9 +85,20 @@ list(APPEND LIBRARY_SOURCES
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 
-# C++ dataset runner
+# C++ dataset runner: main + per-formulation translation units.
+# The sqrt and full-covariance modules expose colliding header paths, so each
+# formulation's TU is compiled as its own object library with include dirs
+# pinned to its module (via the linked library).
+add_library(euroc_sqrt_part OBJECT src/run_euroc_sqrt.cpp)
+target_link_libraries(euroc_sqrt_part PRIVATE ov_srvins_lib)
+target_include_directories(euroc_sqrt_part PRIVATE ${CMAKE_SOURCE_DIR}/common)
 add_executable(run_euroc src/run_euroc.cpp)
-target_link_libraries(run_euroc ov_srvins_lib ${thirdparty_libraries})
+target_link_libraries(run_euroc euroc_sqrt_part euroc_full_part ${thirdparty_libraries})
+# must come after the Ocean archives so it resolves their glibc-2.38+ refs
+target_link_libraries(run_euroc isoc23_shim)
+target_include_directories(run_euroc PRIVATE ${CMAKE_SOURCE_DIR}/common)
+
+add_library(isoc23_shim STATIC ${CMAKE_SOURCE_DIR}/common/isoc23_shim.c)
 target_link_libraries(ov_srvins_lib ${thirdparty_libraries})
 target_include_directories(ov_srvins_lib PUBLIC src/)
 install(TARGETS ov_srvins_lib
@@ -129,8 +131,8 @@ find_package(pybind11 REQUIRED)
 message(STATUS "PYBIND11: " ${pybind11_VERSION})
 
 pybind11_add_module(ov_srvins_py src/pybind.cpp)
-target_link_libraries(ov_srvins_py PRIVATE ov_srvins_lib)
-target_include_directories(ov_srvins_py PRIVATE src/)
+target_link_libraries(ov_srvins_py PRIVATE ov_srvins_lib pybind_full_part)
+target_include_directories(ov_srvins_py PRIVATE src/ ${CMAKE_SOURCE_DIR})
 
 install(TARGETS ov_srvins_py
         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

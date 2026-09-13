@@ -22,47 +22,36 @@
  */
 
 /**
- * @brief C++ runner for EuRoC-format datasets (asl_dataset layout).
+ * @brief C++ runner for EuRoC-format datasets (asl_dataset layout) supporting
+ * BOTH filter formulations, selected with a flag:
  *
- * Feeds IMU and stereo camera measurements natively through VioManager,
- * bypassing the Python bindings, and writes the estimated trajectory in the
- * standard OpenVINS estimate format (timestamp p_IinG q_GtoI):
- *   timestamp(s), tx, ty, tz, qx, qy, qz, qw
+ *   --estimator sqrt   SqrtVINS square-root EKF formulation (default)
+ *   --estimator full   original OpenVINS full-covariance EKF formulation
+ *
+ * Writes the estimated trajectory in the OpenVINS estimate format
+ * (timestamp p_IinG q_GtoI): timestamp(s), tx, ty, tz, qx, qy, qz, qw
  *
  * Usage:
- *   run_euroc <dataset_path> <config.yaml> <out.csv> [max_frames] [cv_backend]
+ *   run_euroc <dataset_path> <config.yaml> <out.csv> [max_frames]
+ *             [cv_backend] [--estimator sqrt|full]
+ *
+ * The two formulations are implemented in separate translation units
+ * (run_euroc_sqrt.cpp / run_euroc_full.cpp) because their headers expose
+ * colliding include paths; this file stays module-independent.
  */
 
 #include <algorithm>
-#include <chrono>
-#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include <opencv2/opencv.hpp>
-
-#include "core/VioManager.h"
-#include "core/VioManagerOptions.h"
+#include "euroc_common.h"
+#include "utils/colors.h"
 #include "utils/print.h"
-#include "utils/yaml_parse.h"
-
-using namespace ov_core;
-using namespace ov_srvins;
-
-struct CamReading {
-  double timestamp;
-  std::string filename_cam0;
-  std::string filename_cam1;
-};
-
-struct ImuReading {
-  double timestamp;
-  Eigen::Matrix<DataType, 3, 1> wm, am;
-};
 
 static std::vector<std::vector<std::string>>
 load_csv(const std::string &path) {
@@ -103,24 +92,70 @@ static int column_of(const std::vector<std::string> &header,
   std::exit(EXIT_FAILURE);
 }
 
+// Defined in run_euroc_sqrt.cpp (SqrtVINS square-root EKF formulation)
+int run_euroc_sqrt(const EurocRunOptions &opt,
+                   const std::vector<ImuReading> &imu_data,
+                   const std::vector<CamReading> &cam_data);
+
+// Defined in run_euroc_full.cpp (original OpenVINS full-covariance EKF)
+int run_euroc_full(const EurocRunOptions &opt,
+                   const std::vector<ImuReading> &imu_data,
+                   const std::vector<CamReading> &cam_data);
+
 int main(int argc, char **argv) {
-  if (argc < 4) {
-    printf("usage: run_euroc <dataset_path> <config.yaml> <out.csv> "
-           "[max_frames] [cv_backend]\n");
+  //===================================================================================
+  // Parse arguments: positional (dataset, config, out, max_frames,
+  // cv_backend) plus the --estimator formulation flag
+  //===================================================================================
+  std::string estimator = "sqrt";
+  std::vector<std::string> positional;
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--estimator" || arg == "--formulation") {
+      if (i + 1 >= argc) {
+        PRINT_ERROR(RED "[ERROR]: %s requires a value (sqrt|full)\n" RESET,
+                    arg.c_str());
+        return EXIT_FAILURE;
+      }
+      estimator = argv[++i];
+    } else if (arg.rfind("--estimator=", 0) == 0) {
+      estimator = arg.substr(std::string("--estimator=").size());
+    } else if (arg == "--sqrt") {
+      estimator = "sqrt";
+    } else if (arg == "--full") {
+      estimator = "full";
+    } else {
+      positional.push_back(arg);
+    }
+  }
+  std::transform(estimator.begin(), estimator.end(), estimator.begin(),
+                 ::tolower);
+  if (estimator != "sqrt" && estimator != "full") {
+    PRINT_ERROR(RED "[ERROR]: unknown estimator '%s' (expected sqrt or full)\n" RESET,
+                estimator.c_str());
     return EXIT_FAILURE;
   }
-  std::string dataset_path = argv[1];
-  std::string config_path = argv[2];
-  std::string output_path = argv[3];
-  int max_frames = (argc > 4) ? std::atoi(argv[4]) : 100000;
-  std::string cv_backend = (argc > 5) ? argv[5] : "opencv";
+  if (positional.size() < 3) {
+    printf("usage: run_euroc <dataset_path> <config.yaml> <out.csv> "
+           "[max_frames] [cv_backend] [--estimator sqrt|full]\n");
+    return EXIT_FAILURE;
+  }
+  EurocRunOptions opt;
+  opt.dataset_path = positional.at(0);
+  opt.config_path = positional.at(1);
+  opt.output_path = positional.at(2);
+  opt.max_frames = (positional.size() > 3) ? std::atoi(positional.at(3).c_str())
+                                           : 100000;
+  opt.cv_backend =
+      (positional.size() > 4) ? positional.at(4) : "opencv";
+  PRINT_INFO("formulation: %s\n", estimator.c_str());
 
   //===================================================================================
   // Load dataset
   //===================================================================================
-  auto imu_rows = load_csv(dataset_path + "/mav0/imu0/data.csv");
-  auto cam0_rows = load_csv(dataset_path + "/mav0/cam0/data.csv");
-  auto cam1_rows = load_csv(dataset_path + "/mav0/cam1/data.csv");
+  auto imu_rows = load_csv(opt.dataset_path + "/mav0/imu0/data.csv");
+  auto cam0_rows = load_csv(opt.dataset_path + "/mav0/cam0/data.csv");
+  auto cam1_rows = load_csv(opt.dataset_path + "/mav0/cam1/data.csv");
 
   int imu_ts_col = column_of(imu_rows.at(0), "#timestamp");
   int imu_wm_col = column_of(imu_rows.at(0), "w_RS_S_x");
@@ -163,95 +198,13 @@ int main(int argc, char **argv) {
       }
     }
   }
+  if (cam_data.size() > (size_t)opt.max_frames)
+    cam_data.resize((size_t)opt.max_frames);
 
   //===================================================================================
-  // Setup options and system
+  // Run the selected formulation
   //===================================================================================
-  auto parser = std::make_shared<YamlParser>(config_path);
-  VioManagerOptions params;
-  params.print_and_load(parser);
-  params.cv_backend = cv_backend;
-  VioManager sys(params);
-
-  //===================================================================================
-  // Processing loop
-  //===================================================================================
-  std::ofstream outfile(output_path);
-  if (!outfile.is_open()) {
-    PRINT_ERROR(RED "[ERROR]: unable to open output file %s\n" RESET,
-                output_path.c_str());
-    return EXIT_FAILURE;
-  }
-  outfile << std::setprecision(9) << std::fixed;
-
-  cv::Mat zero_mask;
-  size_t imu_idx = 0;
-  int processed = 0;
-  auto t_start = std::chrono::steady_clock::now();
-
-  for (const auto &cam : cam_data) {
-    if (processed >= max_frames)
-      break;
-
-    // feed all imu readings up to this camera timestamp
-    while (imu_idx < imu_data.size() &&
-           imu_data.at(imu_idx).timestamp <= cam.timestamp) {
-      const auto &imu = imu_data.at(imu_idx);
-      ImuData message;
-      message.timestamp = imu.timestamp;
-      message.wm = imu.wm;
-      message.am = imu.am;
-      sys.feed_measurement_imu(message);
-      imu_idx++;
-    }
-
-    // load stereo images
-    cv::Mat img0 = cv::imread(dataset_path + "/mav0/cam0/data/" +
-                                  cam.filename_cam0,
-                              cv::IMREAD_GRAYSCALE);
-    cv::Mat img1 = cv::imread(dataset_path + "/mav0/cam1/data/" +
-                                  cam.filename_cam1,
-                              cv::IMREAD_GRAYSCALE);
-    if (img0.empty() || img1.empty()) {
-      processed++;
-      continue;
-    }
-
-    CameraData message;
-    message.timestamp = cam.timestamp;
-    message.sensor_ids = {0, 1};
-    message.images.push_back(img0);
-    message.images.push_back(img1);
-    if (zero_mask.empty())
-      zero_mask = cv::Mat::zeros(img0.rows, img0.cols, CV_8UC1);
-    message.masks.push_back(zero_mask);
-    message.masks.push_back(zero_mask.clone());
-    sys.feed_measurement_camera(message);
-
-    // record state (OpenVINS estimate format: p_IinG and JPL q_GtoI)
-    auto state = sys.get_state();
-    if (state != nullptr && state->is_initialized) {
-      Eigen::Matrix<DataType, 3, 1> pos = state->imu->pos();
-      Eigen::Matrix<DataType, 3, 3> Rot = state->imu->Rot(); // R_GtoI
-      Eigen::Quaternion<DataType> quat(Rot.transpose());     // R_ItoG as quat
-      outfile << state->timestamp << " " << pos(0) << " " << pos(1) << " "
-              << pos(2) << " " << quat.x() << " " << quat.y() << " "
-              << quat.z() << " " << quat.w() << std::endl;
-    }
-
-    processed++;
-    if (processed % 200 == 0) {
-      auto now = std::chrono::steady_clock::now();
-      double secs =
-          std::chrono::duration_cast<std::chrono::milliseconds>(now - t_start)
-              .count() *
-          1e-3;
-      PRINT_INFO("processed %d frames (%.1fs wall)\n", processed, secs);
-      t_start = now;
-    }
-  }
-
-  outfile.close();
-  PRINT_INFO("done: wrote %d frames to %s\n", processed, output_path.c_str());
-  return EXIT_SUCCESS;
+  if (estimator == "sqrt")
+    return run_euroc_sqrt(opt, imu_data, cam_data);
+  return run_euroc_full(opt, imu_data, cam_data);
 }

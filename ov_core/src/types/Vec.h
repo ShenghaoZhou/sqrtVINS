@@ -31,6 +31,7 @@
 #define OV_TYPE_TYPE_VEC_H
 
 #include "Type.h"
+#include <cassert>
 
 namespace ov_type {
 

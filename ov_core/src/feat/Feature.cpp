@@ -28,6 +28,7 @@
 
 
 #include "Feature.h"
+#include <cassert>
 
 using namespace ov_core;
 

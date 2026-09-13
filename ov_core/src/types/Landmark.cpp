@@ -28,6 +28,7 @@
 
 
 #include "Landmark.h"
+#include <cassert>
 
 using namespace ov_type;
 
@@ -65,6 +66,12 @@ Vec3 Landmark::get_xyz(bool getfej) const {
     p_FinA << (1 / p_invFinA(2)) * p_invFinA(0),
         (1 / p_invFinA(2)) * p_invFinA(1), 1 / p_invFinA(2);
     return p_FinA;
+  }
+
+  // CASE: Estimate single depth of the feature using the initial bearing
+  if (feat_representation ==
+      LandmarkRepresentation::Representation::ANCHORED_INVERSE_DEPTH_SINGLE) {
+    return (DataType(1) / value()(0)) * uv_norm_zero;
   }
 
   // Failure
@@ -129,6 +136,22 @@ void Landmark::set_from_xyz(Vec3 p_FinG, bool isfej) {
       set_fej(p_invFinA_MSCKF);
     else
       set_value(p_invFinA_MSCKF);
+    return;
+  }
+
+  // CASE: Estimate single depth of the feature using the initial bearing
+  if (feat_representation ==
+      LandmarkRepresentation::Representation::ANCHORED_INVERSE_DEPTH_SINGLE) {
+    VecX temp(1);
+    temp(0) = DataType(1) / p_FinG(2);
+    if (!isfej)
+      uv_norm_zero = (DataType(1) / p_FinG(2)) * p_FinG;
+    else
+      uv_norm_zero_fej = (DataType(1) / p_FinG(2)) * p_FinG;
+    if (isfej)
+      set_fej(temp);
+    else
+      set_value(temp);
     return;
   }
 

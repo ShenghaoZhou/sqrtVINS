@@ -39,6 +39,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -Wall -Wuninitialized -Wmaybe-uninit
 
 # Build without ROS
 message(STATUS "Building without ROS support (NO_ROS.cmake)")
+get_target_property(EIGEN3_INCLUDE_DIR Eigen3::Eigen INTERFACE_INCLUDE_DIRECTORIES)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/NO_ROS.cmake)
 
 

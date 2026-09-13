@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include <ocean/base/RandomGenerator.h>
@@ -154,8 +155,14 @@ Pyramid OceanBackend::buildPyramid(const Image &src, int levels, int win_size) {
                        FrameType::FORMAT_Y8, FrameType::ORIGIN_UPPER_LEFT);
   Frame frame(frame_type, src.data, Frame::CM_COPY_REMOVE_PADDING_LAYOUT);
 
-  auto pyramid = std::make_shared<FramePyramid>(frame, (unsigned int)levels,
-                                                true /*copyFirstLayer*/);
+  // The 5x5 Gaussian downsampling places the filter center on even pixel
+  // locations, so layer L index i corresponds to full-resolution position
+  // 2^L * i -- the same alignment convention as OpenCV's buildOpticalFlowPyramid
+  // (and the one our tracker assumes). The default 2x2 box filter would be
+  // offset by half a pixel per level.
+  auto pyramid = std::make_shared<FramePyramid>(
+      frame, FramePyramid::DM_FILTER_14641, (unsigned int)levels,
+      true /*copyFirstLayer*/, nullptr);
 
   Pyramid pyr;
   pyr.native = pyramid;
@@ -249,9 +256,14 @@ void OceanBackend::track(const Pyramid &prev, const Pyramid &curr,
   (void)eps;
 
   status.assign(pts_prev.size(), 0);
+  // The caller may pre-fill pts_next with initial guesses (mirroring
+  // OPTFLOW_USE_INITIAL_FLOW semantics); capture them before clearing
+  std::vector<cv::Point2f> init_guess = pts_next;
   pts_next.assign(pts_prev.size(), cv::Point2f());
   if (pts_prev.empty())
     return;
+  if (init_guess.size() != pts_prev.size())
+    init_guess = pts_prev;
 
   auto prev_pyr = nativePyramid(prev);
   auto curr_pyr = nativePyramid(curr);
@@ -271,72 +283,89 @@ void OceanBackend::track(const Pyramid &prev, const Pyramid &curr,
                std::min(prev_pyr->layers(), curr_pyr->layers()));
 
   for (size_t i = 0; i < pts_prev.size(); ++i) {
-    double px = pts_prev[i].x;
-    double py = pts_prev[i].y;
+    const double px = pts_prev[i].x;
+    const double py = pts_prev[i].y;
     // The caller pre-fills pts_next with initial guesses (mirroring
     // OPTFLOW_USE_INITIAL_FLOW semantics)
-    double qx = px;
-    double qy = py;
+    double disp_x = init_guess[i].x - px;
+    double disp_y = init_guess[i].y - py;
 
     bool ok = true;
     for (int level = (int)layers - 1; level >= 0 && ok; --level) {
       const Frame &f0 = prev_pyr->layer((unsigned int)level);
       const Frame &f1 = curr_pyr->layer((unsigned int)level);
       const double scale = (double)(1 << level);
-      const float cx = (float)(px / scale);
-      const float cy = (float)(py / scale);
-      const float dx = (float)(qx / scale);
-      const float dy = (float)(qy / scale);
+      const int Tx = (int)std::floor(px / scale);
+      const int Ty = (int)std::floor(py / scale);
 
-      // The template patch must lie fully inside the previous frame
-      if (cx < (float)half || cy < (float)half ||
-          cx >= (float)(f0.width() - half) ||
-          cy >= (float)(f0.height() - half)) {
-        ok = false;
-        break;
-      }
+      // The template patch must lie fully inside the previous frame; if it
+      // does not fit at this (coarse) level, simply skip the level instead of
+      // dropping the point entirely
+      if (Tx < (int)half || Ty < (int)half || Tx >= (int)f0.width() - (int)half ||
+          Ty >= (int)f0.height() - (int)half)
+        continue;
 
-      // Search window around the prediction in the current frame
-      const int x0 = std::max((int)half, (int)std::floor(dx) - radius);
-      const int x1 =
-          std::min((int)f1.width() - 1 - (int)half, (int)std::floor(dx) + radius);
-      const int y0 = std::max((int)half, (int)std::floor(dy) - radius);
-      const int y1 =
-          std::min((int)f1.height() - 1 - (int)half, (int)std::floor(dy) + radius);
+      // Search window around the predicted position in the current frame
+      const double pred_x = (px + disp_x) / scale;
+      const double pred_y = (py + disp_y) / scale;
+      const int x0 = std::max((int)half, (int)std::floor(pred_x) - radius);
+      const int x1 = std::min((int)f1.width() - 1 - (int)half,
+                              (int)std::floor(pred_x) + radius);
+      const int y0 = std::max((int)half, (int)std::floor(pred_y) - radius);
+      const int y1 = std::min((int)f1.height() - 1 - (int)half,
+                              (int)std::floor(pred_y) + radius);
       if (x0 > x1 || y0 > y1) {
         ok = false;
         break;
       }
 
+      // Two-pass search: find the best SSD value, then take the candidate
+      // position closest to the prediction among all candidates within a
+      // small tolerance of the minimum. A plain first/last-minimum scan is
+      // not usable here: on low-texture patches the SSD landscape is nearly
+      // flat, so any fixed tie-breaking order latches onto the corner of the
+      // search window, and the kick compounds across pyramid levels.
       uint32_t best = 0xFFFFFFFFu;
-      int bx = (int)std::floor(dx);
-      int by = (int)std::floor(dy);
       for (int yy = y0; yy <= y1; ++yy) {
         for (int xx = x0; xx <= x1; ++xx) {
-          const uint32_t value = ssdPatchDispatch(f0, f1, patch, cx, cy,
-                                                  (float)xx, (float)yy);
-          if (value < best) {
+          const uint32_t value = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                  (float)Ty, (float)xx, (float)yy);
+          if (value < best)
             best = value;
-            bx = xx;
-            by = yy;
-          }
         }
       }
-      if (best == 0xFFFFFFFFu) {
-        ok = false;
-        break;
+      const uint32_t tolerance = best / 16u + 4u; // ~6% + quantization slack
+      const int pred_ix = std::min(x1, std::max(x0, (int)std::floor(pred_x)));
+      const int pred_iy = std::min(y1, std::max(y0, (int)std::floor(pred_y)));
+      double pred_dist = std::numeric_limits<double>::max();
+      int bx = pred_ix;
+      int by = pred_iy;
+      for (int yy = y0; yy <= y1; ++yy) {
+        for (int xx = x0; xx <= x1; ++xx) {
+          const uint32_t value = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                  (float)Ty, (float)xx, (float)yy);
+          if (value <= best + tolerance) {
+            const double dist = std::pow(xx - pred_x, 2) + std::pow(yy - pred_y, 2);
+            if (dist < pred_dist) {
+              pred_dist = dist;
+              bx = xx;
+              by = yy;
+            }
+          }
+        }
       }
 
       // Sub-pixel refinement on the finest level via parabola fitting
       double offset_x = 0.0;
       double offset_y = 0.0;
       if (level == 0) {
-        const uint32_t center = best;
+        const uint32_t center = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                 (float)Ty, (float)bx, (float)by);
         if (bx - 1 >= (int)half && bx + 1 < (int)f1.width() - (int)half) {
-          const uint32_t left = ssdPatchDispatch(f0, f1, patch, cx, cy,
-                                                 (float)(bx - 1), (float)by);
-          const uint32_t right = ssdPatchDispatch(f0, f1, patch, cx, cy,
-                                                  (float)(bx + 1), (float)by);
+          const uint32_t left = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                 (float)Ty, (float)(bx - 1), (float)by);
+          const uint32_t right = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                  (float)Ty, (float)(bx + 1), (float)by);
           const double denom = (double)left - 2.0 * (double)center +
                                (double)right;
           if (std::abs(denom) > 1e-9)
@@ -344,10 +373,10 @@ void OceanBackend::track(const Pyramid &prev, const Pyramid &curr,
                 -0.5, std::min(0.5, 0.5 * ((double)left - (double)right) / denom));
         }
         if (by - 1 >= (int)half && by + 1 < (int)f1.height() - (int)half) {
-          const uint32_t top = ssdPatchDispatch(f0, f1, patch, cx, cy,
-                                                (float)bx, (float)(by - 1));
-          const uint32_t bottom = ssdPatchDispatch(f0, f1, patch, cx, cy,
-                                                   (float)bx, (float)(by + 1));
+          const uint32_t top = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                (float)Ty, (float)bx, (float)(by - 1));
+          const uint32_t bottom = ssdPatchDispatch(f0, f1, patch, (float)Tx,
+                                                   (float)Ty, (float)bx, (float)(by + 1));
           const double denom = (double)top - 2.0 * (double)center +
                                (double)bottom;
           if (std::abs(denom) > 1e-9)
@@ -356,12 +385,17 @@ void OceanBackend::track(const Pyramid &prev, const Pyramid &curr,
         }
       }
 
-      qx = ((double)bx + offset_x) * scale;
-      qy = ((double)by + offset_y) * scale;
+      // Measure the displacement relative to the integer template anchor
+      // (which is unbiased) rather than reporting the absolute matched
+      // position: reporting the absolute position would silently drop the
+      // fractional part of the tracked point every frame (the template is
+      // sampled at floor(p)), biasing tracks by ~-0.5 px per frame
+      disp_x = ((double)bx + offset_x - (double)Tx) * scale;
+      disp_y = ((double)by + offset_y - (double)Ty) * scale;
     }
 
     status[i] = ok ? 1 : 0;
-    pts_next[i] = cv::Point2f((float)qx, (float)qy);
+    pts_next[i] = cv::Point2f((float)(px + disp_x), (float)(py + disp_y));
   }
 }
 
@@ -388,8 +422,9 @@ void OceanBackend::reject(const std::vector<cv::Point2f> &pts0_n,
   if (!Ocean::Geometry::RANSAC::fundamentalMatrix(
           left.data(), right.data(), size, random_generator, right_F_left,
           8u /*testCandidates*/, 200u /*iterations*/, Ocean::Scalar(0.001),
-          &used_indices))
+          &used_indices)) {
     return;
+  }
 
   // Inlier test using the Sampson distance in normalized coordinates, scaled
   // to pixels via the focal length (same metric as the OpenCV backend)

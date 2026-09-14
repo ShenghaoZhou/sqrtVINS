@@ -61,6 +61,9 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   VioManagerOptions params;
   params.print_and_load(parser);
   params.cv_backend = opt.cv_backend;
+  // Repeatability settings used by the original ros1_serial_msckf
+  cv::setNumThreads(params.num_opencv_threads);
+  cv::setRNGSeed(0);
 
   auto estimator = std::make_shared<SqrtEstimator>(params);
   auto frontend = std::make_shared<Frontend>(params, estimator->get_state());
@@ -92,9 +95,16 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   for (const auto &cam : cam_data) {
     double curr_cam_time = cam.timestamp;
 
-    // Feed IMU measurements up to this camera time in one batched call
+    // Feed IMU measurements up to this camera time in one batched call.
+    // Mirror the original ROS pipeline exactly: a camera is only processed
+    // once the IMU clock has passed cam_time + dt, so the buffer must end at
+    // the FIRST sample strictly past cam_time + dt (the initializer's window
+    // and the propagator's final integration interval both depend on it).
+    double t_off = estimator->get_state()->calib_dt_CAMtoIMU->value()(0);
     size_t k = imu_idx;
-    while (k < imu_data.size() && imu_data.at(k).timestamp <= curr_cam_time)
+    while (k < imu_data.size() && imu_data.at(k).timestamp <= curr_cam_time + t_off)
+      k++;
+    if (k < imu_data.size() && imu_data.at(k).timestamp > curr_cam_time + t_off)
       k++;
     if (k > imu_idx) {
       std::vector<ImuData> msgs(k - imu_idx);
@@ -139,6 +149,12 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
       if (initializer->initialize(state, !params.try_zupt)) {
         PRINT_INFO("VIO Initialized at %.4f!\n", curr_cam_time);
         frontend->set_startup_time(curr_cam_time);
+        // Post-init bookkeeping from VioManager::try_to_initialize
+        frontend->get_trackFEATS()->get_feature_database()->cleanup_measurements(
+            state->timestamp);
+        frontend->get_trackFEATS()->set_num_features(
+            std::floor((double)params.num_pts /
+                       (double)params.state_options.num_cameras));
         if (state->imu->vel().norm() > params.zupt_max_velocity)
           has_moved_since_zupt = true;
       }

@@ -92,6 +92,9 @@ add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 add_library(euroc_sqrt_part OBJECT src/run_euroc_sqrt.cpp)
 target_link_libraries(euroc_sqrt_part PRIVATE ov_srvins_lib)
 target_include_directories(euroc_sqrt_part PRIVATE ${CMAKE_SOURCE_DIR}/common)
+add_executable(run_euroc_vio src/run_euroc_vio.cpp)
+target_link_libraries(run_euroc_vio ov_srvins_lib ${thirdparty_libraries} isoc23_shim)
+
 add_executable(run_euroc src/run_euroc.cpp)
 target_link_libraries(run_euroc euroc_sqrt_part euroc_full_part ${thirdparty_libraries})
 # must come after the Ocean archives so it resolves their glibc-2.38+ refs

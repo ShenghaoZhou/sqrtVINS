@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
   // cv_backend) plus the --estimator formulation flag
   //===================================================================================
   std::string estimator = "sqrt";
+  double bag_start = 0.0;
   std::vector<std::string> positional;
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
@@ -124,6 +125,14 @@ int main(int argc, char **argv) {
       estimator = "sqrt";
     } else if (arg == "--full") {
       estimator = "full";
+    } else if (arg == "--bag_start") {
+      if (i + 1 >= argc) {
+        PRINT_ERROR(RED "[ERROR]: --bag_start requires a value\n" RESET);
+        return EXIT_FAILURE;
+      }
+      bag_start = std::atof(argv[++i]);
+    } else if (arg.rfind("--bag_start=", 0) == 0) {
+      bag_start = std::atof(arg.c_str() + std::string("--bag_start=").size());
     } else {
       positional.push_back(arg);
     }
@@ -200,6 +209,29 @@ int main(int argc, char **argv) {
   }
   if (cam_data.size() > (size_t)opt.max_frames)
     cam_data.resize((size_t)opt.max_frames);
+
+  //===================================================================================
+  // Skip the first bag_start seconds (like a rosbag view starting at
+  // bag_begin + bag_start): drop everything before that time
+  //===================================================================================
+  opt.bag_start = bag_start;
+  if (opt.bag_start > 0 && !imu_data.empty() && !cam_data.empty()) {
+    double t_begin =
+        std::min(imu_data.front().timestamp, cam_data.front().timestamp);
+    double t0 = t_begin + opt.bag_start;
+    imu_data.erase(std::remove_if(imu_data.begin(), imu_data.end(),
+                                  [&](const ImuReading &m) {
+                                    return m.timestamp < t0;
+                                  }),
+                   imu_data.end());
+    cam_data.erase(std::remove_if(cam_data.begin(), cam_data.end(),
+                                  [&](const CamReading &c) {
+                                    return c.timestamp < t0;
+                                  }),
+                   cam_data.end());
+    PRINT_INFO("bag_start: skipping to t = %.3f (%zu imu, %zu cam left)\n", t0,
+               imu_data.size(), cam_data.size());
+  }
 
   //===================================================================================
   // Run the selected formulation

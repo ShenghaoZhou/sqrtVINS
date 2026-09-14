@@ -87,16 +87,18 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
 }
 
 void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
-  // Do not trim before initialization: the static initializer is sensitive to
-  // the amount of IMU history available in its selection window
-  if (!state->is_initialized) {
-    feed_imu(message, -1);
-    return;
-  }
-  // The oldest time we need IMU with is the last clone
+  // The oldest time we need IMU with is the last clone. Before
+  // initialization, keep only a rolling init_window_time + 0.1 s window:
+  // the static initializer averages the IMU over
+  // [buffer_oldest, last_static_timestamp], so an untrimmed buffer would
+  // pull pre-static (moving) data into the bias solution (see VioManager)
   double oldest_time = state->margtimestep();
   if (oldest_time > state->timestamp) {
     oldest_time = -1;
+  }
+  if (!state->is_initialized) {
+    oldest_time = message.timestamp - params.init_options.init_window_time +
+                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
   }
   feed_imu(message, oldest_time);
 }
@@ -106,17 +108,19 @@ void SqrtEstimator::feed_imu_batch(
   if (messages.empty()) {
     return;
   }
-  // The buffer trim time only changes on propagation (new clones), not on
-  // feeding, so computing it once for the batch is equivalent to per-message.
-  // Like feed_measurement_imu, no trimming before initialization.
-  double oldest_time = -1;
-  if (state->is_initialized) {
-    oldest_time = state->margtimestep();
-    if (oldest_time > state->timestamp) {
-      oldest_time = -1;
-    }
-  }
+  // NOTE: like feed_measurement_imu, the pre-init trim keeps only a rolling
+  // init_window_time + 0.1 s window, so it must be computed per message
   for (const auto &message : messages) {
+    double oldest_time = -1;
+    if (state->is_initialized) {
+      oldest_time = state->margtimestep();
+      if (oldest_time > state->timestamp) {
+        oldest_time = -1;
+      }
+    } else {
+      oldest_time = message.timestamp - params.init_options.init_window_time +
+                    state->calib_dt_CAMtoIMU->value()(0) - 0.1;
+    }
     feed_imu(message, oldest_time);
   }
 }

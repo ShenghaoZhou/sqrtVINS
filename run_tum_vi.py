@@ -81,8 +81,13 @@ def run_vio(dataset_path, config_path):
         while cam_idx < len(cam_times):
             curr_cam_time = cam_times[cam_idx]
 
-            # Feed IMU measurements up to this camera time in one batched call
+            # Feed IMU measurements up to this camera time in one batched call.
+            # Include one sample past the camera time: the propagator needs an
+            # IMU reading after the camera time to close the final integration
+            # interval (select_imu_readings).
             k = np.searchsorted(imu_times, curr_cam_time, side='right')
+            if k < len(imu_times):
+                k += 1
             if k > imu_idx:
                 estimator.feed_imu_batch(imu_times[imu_idx:k], imu_wm[imu_idx:k], imu_am[imu_idx:k])
                 imu_idx = k

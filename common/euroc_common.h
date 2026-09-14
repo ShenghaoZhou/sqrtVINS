@@ -35,6 +35,9 @@ struct EurocRunOptions {
   std::string output_path;
   std::string cv_backend = "opencv";
   int max_frames = 100000;
+  /// Seconds to skip from the start of the dataset (rosbag --start style),
+  /// matching the bag_start values used by the original launch files
+  double bag_start = 0.0;
 };
 
 /// One stereo camera reading (timestamp-intersected cam0/cam1 pair)

@@ -72,8 +72,21 @@ int run_euroc_full(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   for (const auto &cam : cam_data) {
     double curr_cam_time = cam.timestamp;
 
-    // Feed all IMU readings up to this camera timestamp
-    while (imu_idx < imu_data.size() && imu_data.at(imu_idx).timestamp <= curr_cam_time) {
+    // Feed all IMU readings up to this camera timestamp, plus past it by the
+    // current cam-IMU offset (the propagator needs an IMU reading after the
+    // camera time to close the final integration interval)
+    double t_off = sys.get_state()->_calib_dt_CAMtoIMU->value()(0);
+    while (imu_idx < imu_data.size() && imu_data.at(imu_idx).timestamp <= curr_cam_time + t_off) {
+      const auto &imu = imu_data.at(imu_idx);
+      ImuData message;
+      message.timestamp = imu.timestamp;
+      message.wm = imu.wm.cast<DataType>();
+      message.am = imu.am.cast<DataType>();
+      sys.feed_measurement_imu(message);
+      imu_idx++;
+    }
+    // Ensure one IMU sample strictly past cam_time + dt (see run_euroc_sqrt)
+    if (imu_idx < imu_data.size()) {
       const auto &imu = imu_data.at(imu_idx);
       ImuData message;
       message.timestamp = imu.timestamp;

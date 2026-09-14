@@ -1,0 +1,42 @@
+Setting printing level to: INFO
+[COMP]: 36382 poses in MH_01_easy.txt => length of 80.63 meters
+[COMP]: 29993 poses in MH_02_easy.txt => length of 73.47 meters
+[COMP]: 26302 poses in MH_03_medium.txt => length of 130.93 meters
+[COMP]: 19753 poses in MH_04_difficult.txt => length of 91.75 meters
+[COMP]: 22212 poses in MH_05_difficult.txt => length of 97.59 meters
+[COMP]: 2895 poses in V1_01_easy.txt => length of 58.35 meters
+[COMP]: 16702 poses in V1_02_medium.txt => length of 75.89 meters
+[COMP]: 20932 poses in V1_03_difficult.txt => length of 78.98 meters
+[COMP]: 22401 poses in V2_01_easy.txt => length of 36.50 meters
+[COMP]: 23091 poses in V2_02_medium.txt => length of 83.23 meters
+[COMP]: 22970 poses in V2_03_difficult.txt => length of 86.13 meters
+============================================
+SCALE ERROR LATEX TABLE
+============================================
+ & \textbf{MH\_01\_easy} & \textbf{MH\_02\_easy} & \textbf{MH\_03\_medium} & \textbf{MH\_04\_difficult} & \textbf{MH\_05\_difficult} & \textbf{V1\_01\_easy} & \textbf{V1\_02\_medium} & \textbf{V1\_03\_difficult} & \textbf{V2\_01\_easy} & \textbf{V2\_02\_medium} & \textbf{V2\_03\_difficult} & \textbf{Average} \\\hline
+sqrtvins\_new & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+============================================
+============================================
+ATE LATEX TABLE
+============================================
+ & \textbf{MH\_01\_easy} & \textbf{MH\_02\_easy} & \textbf{MH\_03\_medium} & \textbf{MH\_04\_difficult} & \textbf{MH\_05\_difficult} & \textbf{V1\_01\_easy} & \textbf{V1\_02\_medium} & \textbf{V1\_03\_difficult} & \textbf{V2\_01\_easy} & \textbf{V2\_02\_medium} & \textbf{V2\_03\_difficult} & \textbf{Average} \\\hline
+sqrtvins\_new & 60.755 / 7824.802 & 146.361 / 19491.922 & 0.883 / 0.178 & 124.170 / 11146.310 & 0.899 / 0.422 & 0.718 / 0.041 & 1.822 / 0.050 & 2.702 / 0.060 & 1.333 / 0.077 & 1.099 / 0.059 & 1.477 / 0.116 & 31.111 / 3496.731 \\
+============================================
+============================================
+RPE LATEX TABLE
+============================================
+ & \textbf{8m} & \textbf{16m} & \textbf{24m} & \textbf{32m} & \textbf{40m} & \textbf{48m} \\\hline
+sqrtvins\_new & 11.671 / 1292.624 & 21.442 / 2515.209 & 29.451 / 3670.723 & 35.343 / 5009.041 & 37.531 / 6058.383 & 37.117 / 6889.520 \\
+============================================
+============================================
+SUCCESS RATE
+============================================
+ & \textbf{MH\_01\_easy} & \textbf{MH\_02\_easy} & \textbf{MH\_03\_medium} & \textbf{MH\_04\_difficult} & \textbf{MH\_05\_difficult} & \textbf{V1\_01\_easy} & \textbf{V1\_02\_medium} & \textbf{V1\_03\_difficult} & \textbf{V2\_01\_easy} & \textbf{V2\_02\_medium} & \textbf{V2\_03\_difficult} & \textbf{Total} \\\hline
+sqrtvins\_new & 0.000  & 0.000  & 100.000  & 0.000  & 100.000  & 100.000  & 100.000  & 100.000  & 100.000  & 100.000  & 100.000  & 72.727 \\
+============================================
+============================================
+GRAVITY ERROR LATEX TABLE
+============================================
+ & \textbf{MH\_01\_easy} & \textbf{MH\_02\_easy} & \textbf{MH\_03\_medium} & \textbf{MH\_04\_difficult} & \textbf{MH\_05\_difficult} & \textbf{V1\_01\_easy} & \textbf{V1\_02\_medium} & \textbf{V1\_03\_difficult} & \textbf{V2\_01\_easy} & \textbf{V2\_02\_medium} & \textbf{V2\_03\_difficult} & \textbf{Average} \\\hline
+sqrtvins\_new & 67.188  & 159.771  & 1.051  & 10.734  & 1.756  & 1.423  & 2.576  & 1.958  & 1.960  & 1.020  & 1.346  & 22.798 \\
+============================================

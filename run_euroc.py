@@ -87,9 +87,15 @@ def run_vio(dataset_path, config_path, max_frames=None):
     for i in range(start_cam, start_cam + n_frames):
         curr_cam_time = cam0_times[i]
 
-        # Feed IMU measurements up to this camera time in one batched call
+        # Feed IMU measurements up to this camera time in one batched call.
+        # Include one sample past the camera time: the propagator needs an IMU
+        # reading after the camera time to close the final integration interval
+        # (select_imu_readings), which the original ROS pipeline guaranteed by
+        # gating cameras on the IMU clock.
         t0 = time.perf_counter()
         k = np.searchsorted(imu_times, curr_cam_time, side='right')
+        if k < len(imu_times):
+            k += 1
         if k > imu_idx:
             estimator.feed_imu_batch(imu_times[imu_idx:k], imu_wm[imu_idx:k], imu_am[imu_idx:k])
             imu_idx = k

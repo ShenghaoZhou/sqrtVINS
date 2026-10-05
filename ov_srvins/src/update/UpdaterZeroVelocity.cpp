@@ -29,6 +29,8 @@
 
 #include "UpdaterZeroVelocity.h"
 
+#include <stdexcept>
+
 #include "UpdaterHelper.h"
 
 #include "feat/FeatureDatabase.h"
@@ -343,9 +345,8 @@ bool UpdaterZeroVelocity::try_update(std::shared_ptr<State> state,
     std::shared_ptr<ov_type::PoseJPL> pose =
         std::dynamic_pointer_cast<ov_type::PoseJPL>(posetemp);
     if (pose == nullptr) {
-      PRINT_ERROR(RED "INVALID OBJECT RETURNED FROM STATEHELPER CLONE, "
-                      "EXITING!#!@#!@#\n" RESET);
-      std::exit(EXIT_FAILURE);
+      throw std::runtime_error(
+          "StateHelper::clone() returned an object that is not a PoseJPL");
     }
     state->clones_IMU[state->timestamp] = pose;
 

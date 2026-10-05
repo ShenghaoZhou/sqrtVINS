@@ -29,6 +29,8 @@
 
 #include "StateHelper.h"
 
+#include <stdexcept>
+
 #include "state/State.h"
 #include "utils/Helper.h"
 
@@ -303,8 +305,6 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
   // Reverse rows to have upper triangular structure
   reverse_mat(F, false);
 
-  state->rT81 = std::chrono::steady_clock::now();
-
   // Get H^T * r + H^T * H * dx for iterative update
   if (is_iterative) {
     // Get H^T*H*dx
@@ -347,9 +347,6 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
           ->set_value(calib.second->value());
     }
   }
-
-  // clean the buffer
-  state->rT82 = std::chrono::steady_clock::now();
 }
 
 void StateHelper::iterative_update_llt(std::shared_ptr<State> state) {
@@ -421,12 +418,12 @@ bool StateHelper::initialize(std::shared_ptr<State> state,
   // Check that this new variable is not already initialized
   if (std::find(state->variables_.begin(), state->variables_.end(),
                 new_variable) != state->variables_.end()) {
-    PRINT_ERROR("StateHelper::initialize_invertible() - Called on variable "
-                "that is already in the state\n");
     PRINT_ERROR("StateHelper::initialize_invertible() - Found this variable at "
                 "%d in covariance\n",
                 new_variable->id());
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error(
+        "StateHelper::initialize_invertible() - Called on variable that is "
+        "already in the state");
   }
 
   //==========================================================
@@ -538,12 +535,12 @@ void StateHelper::initialize_invertible(
   // Check that this new variable is not already initialized
   if (std::find(state->variables_.begin(), state->variables_.end(),
                 new_variable) != state->variables_.end()) {
-    PRINT_ERROR("StateHelper::initialize_invertible() - Called on variable "
-                "that is already in the state\n");
     PRINT_ERROR("StateHelper::initialize_invertible() - Found this variable at "
                 "%d in covariance\n",
                 new_variable->id());
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error(
+        "StateHelper::initialize_invertible() - Called on variable that is "
+        "already in the state");
   }
 
   //==========================================================

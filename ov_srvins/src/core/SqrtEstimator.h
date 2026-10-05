@@ -79,10 +79,18 @@ public:
   /**
    * @brief Try to perform a zero-velocity update
    * @param timestamp Target timestamp
-   * @param has_moved_since_zupt Flag indicating if the system has moved
+   * @param has_moved_since_zupt Extra "has moved" flag, OR-ed with the internal
+   * bookkeeping flag (kept for callers that track motion themselves)
    * @return True if a ZUPT update was performed
    */
-  bool try_zupt(double timestamp, bool has_moved_since_zupt);
+  bool try_zupt(double timestamp, bool has_moved_since_zupt = false);
+
+  /// Notify the estimator that motion has occurred since the last ZUPT
+  /// (called by the pipeline after initialization and after each visual update)
+  void notify_moved() { has_moved_since_zupt_ = true; }
+
+  /// Whether motion has been observed since startup
+  bool has_moved_since_zupt() const { return has_moved_since_zupt_; }
 
   /**
    * @brief Propagate the state forward and add a new clone
@@ -132,8 +140,9 @@ private:
   /// Our zero velocity tracker
   std::shared_ptr<UpdaterZeroVelocity> updaterZUPT;
 
-  /// Timing points for internal stats (mirrored from VioManager for now)
-  std::chrono::steady_clock::time_point rT4, rT5, rT6, rT7, rT8, rT9;
+  /// ZUPT bookkeeping: set once motion is observed (init with velocity, or a
+  /// visual update); used when zupt_only_at_beginning is enabled
+  bool has_moved_since_zupt_ = false;
 };
 
 } // namespace ov_srvins

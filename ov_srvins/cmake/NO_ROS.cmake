@@ -21,10 +21,8 @@ set(CATKIN_PACKAGE_LIB_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 set(CATKIN_PACKAGE_BIN_DESTINATION "${CMAKE_INSTALL_BINDIR}")
 set(CATKIN_GLOBAL_INCLUDE_DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
-option(USE_FLOAT "Use float version when built" ON)
-if (USE_FLOAT)
-    add_definitions(-DUSE_FLOAT=1)
-endif ()
+# NOTE: USE_FLOAT is inherited from ov_core_lib (PUBLIC compile definition),
+# keeping the DataType ABI consistent across all libraries.
 
 # Include our header files
 include_directories(
@@ -43,9 +41,14 @@ include(${CMAKE_SOURCE_DIR}/ov_core/cmake/OceanBackend.cmake)
 list(APPEND thirdparty_libraries ${OCEAN_LIBRARIES})
 
 
-# Link against the shared ov_core / ov_init / ov_msckf libraries
-message(STATUS "LINKING TO OV_CORE / OV_INIT / OV_MSCKF LIBRARIES....")
-list(APPEND thirdparty_libraries ov_core_lib ov_init_lib ov_msckf_lib)
+# Link against the shared ov_core library only. This module must NOT link
+# ov_init_lib / ov_msckf_lib: their PUBLIC include dirs expose header paths
+# ("state/State.h", ...) that collide with this module's, so pulling them in
+# would make every ov_srvins TU resolve includes by directory order.
+# Only the final run_euroc binary (which links both formulation object
+# libraries) references the full-covariance module.
+message(STATUS "LINKING TO OV_CORE LIBRARY....")
+list(APPEND thirdparty_libraries ov_core_lib)
 
 
 
@@ -53,14 +56,13 @@ list(APPEND thirdparty_libraries ov_core_lib ov_init_lib ov_msckf_lib)
 # Make the shared library
 # #################################################
 list(APPEND LIBRARY_SOURCES
-        src/dummy.cpp
         src/state/State.cpp
         src/state/StateHelper.cpp
         src/state/Propagator.cpp
         src/state/IMUHandler.cpp
         src/core/SqrtEstimator.cpp
         src/core/Frontend.cpp
-        src/core/VioManager.cpp
+        src/core/Pipeline.cpp
         src/core/VioManagerOptions.cpp
         src/update/UpdaterHelper.cpp
         src/update/UpdaterMSCKF.cpp
@@ -92,11 +94,9 @@ add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 add_library(euroc_sqrt_part OBJECT src/run_euroc_sqrt.cpp)
 target_link_libraries(euroc_sqrt_part PRIVATE ov_srvins_lib)
 target_include_directories(euroc_sqrt_part PRIVATE ${CMAKE_SOURCE_DIR}/common)
-add_executable(run_euroc_vio src/run_euroc_vio.cpp)
-target_link_libraries(run_euroc_vio ov_srvins_lib ${thirdparty_libraries} isoc23_shim)
-
 add_executable(run_euroc src/run_euroc.cpp)
-target_link_libraries(run_euroc euroc_sqrt_part euroc_full_part ${thirdparty_libraries})
+target_link_libraries(run_euroc euroc_sqrt_part euroc_full_part
+        ov_srvins_lib ov_msckf_lib ov_init_lib ${thirdparty_libraries})
 # must come after the Ocean archives so it resolves their glibc-2.38+ refs
 target_link_libraries(run_euroc isoc23_shim)
 target_include_directories(run_euroc PRIVATE ${CMAKE_SOURCE_DIR}/common)

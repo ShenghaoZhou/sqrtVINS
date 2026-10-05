@@ -89,9 +89,6 @@ protected:
 
   // Note: updaterMSCKF and updaterSLAM are now static functions
 
-  /// Our history of IMU messages (time, angular, linear)
-  std::shared_ptr<std::vector<ov_core::ImuData>> imu_data_;
-
   /// Static initialization helper class
   std::unique_ptr<StaticInitializer> init_static_;
 

@@ -58,16 +58,10 @@ public:
   void clean_old_imu_measurements(double oldest_time);
 
   /**
-   * @brief Gets a copy of the IMU data
+   * @brief Gets a copy of the IMU data (taken under lock)
    * @param imu_data Vector to fill with IMU data
    */
   void get_imu_data(std::vector<ov_core::ImuData> &imu_data);
-
-  /**
-   * @brief Gets a shared pointer to the IMU data (use with caution)
-   * @return Shared pointer to the IMU data vector
-   */
-  std::shared_ptr<std::vector<ov_core::ImuData>> get_imu_data();
 
   /**
    * @brief Executes a function with access to the IMU data under lock

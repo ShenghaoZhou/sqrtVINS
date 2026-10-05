@@ -20,9 +20,15 @@ def run_vio(dataset_path, config_path, max_frames=None):
     parser = vins.YamlParser(config_path)
     options.print_and_load(parser)
 
+    # Repeatability settings used by the C++ runner (run_euroc)
+    cv2.setNumThreads(options.num_opencv_threads)
+    cv2.setRNGSeed(0)
+
     # 2. Initialize Estimator and Frontend
     estimator = vins.SqrtEstimator(options)
     frontend = vins.Frontend(options, estimator.get_state())
+    # Wire the tracker database into the ZUPT updater (disparity check)
+    estimator.set_zupt_database(frontend.get_trackFEATS().get_feature_database())
 
     # 3. Setup Initializer
     initializer = vins.InertialInitializer(
@@ -49,9 +55,9 @@ def run_vio(dataset_path, config_path, max_frames=None):
     cam0_df = cam0_df.sort_values('#timestamp')
     cam1_df = cam1_df.sort_values('#timestamp')
 
-    cam0_times = cam0_df['#timestamp'].values / 1e9
-    cam1_times = cam1_df['#timestamp'].values / 1e9
-    imu_times = imu_df['#timestamp'].values / 1e9
+    cam0_times = cam0_df['#timestamp'].values * 1e-9
+    cam1_times = cam1_df['#timestamp'].values * 1e-9
+    imu_times = imu_df['#timestamp'].values * 1e-9
     imu_wm = imu_df[['w_RS_S_x', 'w_RS_S_y', 'w_RS_S_z']].to_numpy()
     imu_am = imu_df[['a_RS_S_x', 'a_RS_S_y', 'a_RS_S_z']].to_numpy()
 
@@ -75,7 +81,6 @@ def run_vio(dataset_path, config_path, max_frames=None):
     imu_idx = 0
     trajectory = []
     timestamps = []
-    has_moved_since_zupt = False
     zero_mask = None
     init_frame = None
 
@@ -91,9 +96,12 @@ def run_vio(dataset_path, config_path, max_frames=None):
         # Include one sample past the camera time: the propagator needs an IMU
         # reading after the camera time to close the final integration interval
         # (select_imu_readings), which the original ROS pipeline guaranteed by
-        # gating cameras on the IMU clock.
+        # gating cameras on the IMU clock. Use the CURRENT estimated camera-IMU
+        # time offset like the C++ runner does (it drifts when online
+        # timeoffset calibration is enabled).
         t0 = time.perf_counter()
-        k = np.searchsorted(imu_times, curr_cam_time, side='right')
+        t_off = estimator.get_state().cam_imu_timeoffset()
+        k = np.searchsorted(imu_times, curr_cam_time + t_off, side='right')
         if k < len(imu_times):
             k += 1
         if k > imu_idx:
@@ -133,15 +141,16 @@ def run_vio(dataset_path, config_path, max_frames=None):
             if not state.is_initialized:
                 if initializer.initialize(state, not options.try_zupt):
                     print(f"VIO Initialized at {curr_cam_time}!")
-                    frontend.set_startup_time(curr_cam_time)
-                    if np.linalg.norm(state.imu.vel()) > options.zupt_max_velocity:
-                        has_moved_since_zupt = True
+                    # Post-init bookkeeping (startup time, db cleanup, feature
+                    # budget, ZUPT motion flag) - same as the C++ runner
+                    vins.finalize_initialization(estimator, frontend, options)
                     init_frame = i - start_cam
                 continue
 
-            # Try a zero-velocity update (mirrors track_image_and_update)
+            # Try a zero-velocity update (ZUPT motion bookkeeping is internal
+            # to the estimator)
             t0 = time.perf_counter()
-            did_zupt = estimator.try_zupt(curr_cam_time, has_moved_since_zupt)
+            did_zupt = estimator.try_zupt(curr_cam_time)
             t_zupt_local = time.perf_counter() - t0
             if did_zupt:
                 n_zupt += 1
@@ -154,7 +163,6 @@ def run_vio(dataset_path, config_path, max_frames=None):
             t_fused += time.perf_counter() - t0
             if did_update:
                 n_upd += 1
-                has_moved_since_zupt = True
         except Exception as e:
             print(f"Error at frame {i - start_cam}: {e}")
             continue
@@ -243,7 +251,7 @@ if __name__ == "__main__":
 
     gt_df = pd.read_csv(gt_path)
     gt_df.columns = [c.strip().split(' ')[0] for c in gt_df.columns]
-    gt_stamps = gt_df['#timestamp'].values / 1e9
+    gt_stamps = gt_df['#timestamp'].values * 1e-9
     gt_traj = gt_df[['p_RS_R_x', 'p_RS_R_y', 'p_RS_R_z']].values
 
     # Evaluate

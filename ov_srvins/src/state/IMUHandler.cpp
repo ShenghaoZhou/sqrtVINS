@@ -57,9 +57,4 @@ void IMUHandler::get_imu_data(std::vector<ov_core::ImuData> &imu_data) {
   imu_data = imu_data_;
 }
 
-std::shared_ptr<std::vector<ov_core::ImuData>> IMUHandler::get_imu_data() {
-  return std::shared_ptr<std::vector<ov_core::ImuData>>(&imu_data_,
-                                                        [](auto *) {});
-}
-
 } // namespace ov_srvins

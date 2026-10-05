@@ -29,6 +29,8 @@
 
 #include "Propagator.h"
 
+#include <stdexcept>
+
 #include "state/State.h"
 #include "state/StateHelper.h"
 #include "utils/DataType.h"
@@ -426,20 +428,17 @@ Propagator::propagate(std::shared_ptr<State> state, double timestamp) {
   // time!!!!
   if (state->timestamp == timestamp &&
       state->clones_IMU.find(state->timestamp) != state->clones_IMU.end()) {
-    PRINT_ERROR(
-        RED
-        "Propagator::propagate(): Two same clone in the state!!!!\n" RESET);
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error(
+        "Propagator::propagate(): Two same clone in the state!!!!");
   }
 
   // We should crash if we are trying to propagate backwards
   if (state->timestamp > timestamp) {
-    PRINT_ERROR(
-        RED
-        "Propagator::propagate(): Propagation called trying to propagate backwards in time!!!!\n" RESET);
     PRINT_ERROR(RED "Propagator::propagate(): desired propagation = %.4f\n" RESET,
                 (timestamp - state->timestamp));
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error(
+        "Propagator::propagate(): Propagation called trying to propagate "
+        "backwards in time!!!!");
   }
 
   // Set the last time offset value if we have just started the system up

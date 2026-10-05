@@ -31,10 +31,10 @@
 #define OV_SRVINS_STATICINITIALIZER_H
 
 #include "initializer/InertialInitializerOptions.h"
+#include "state/Propagator.h"
 #include "state/State.h"
 
 namespace ov_core {
-class FeatureDatabase;
 struct ImuData;
 } // namespace ov_core
 namespace ov_type {
@@ -60,13 +60,13 @@ public:
   /**
    * @brief Default constructor
    * @param params_ Parameters loaded from either ROS or CMDLINE
-   * @param db Feature tracker database with all features in it
-   * @param imu_data_ Shared pointer to our IMU vector of historical information
+   * @param propagator Propagator shared with VIO (IMU history is copied out
+   * under lock at initialize() time, so this is safe to call from the
+   * background initialization thread)
    */
   explicit StaticInitializer(
       const InertialInitializerOptions &params,
-      std::shared_ptr<ov_core::FeatureDatabase> db,
-      std::shared_ptr<std::vector<ov_core::ImuData>> imu_data);
+      std::shared_ptr<ov_srvins::Propagator> propagator);
 
   /**
    * @brief Use the static window to initialize the state
@@ -83,11 +83,8 @@ private:
   /// Initialization parameters
   InertialInitializerOptions params_;
 
-  /// Feature tracker database with all features in it
-  std::shared_ptr<ov_core::FeatureDatabase> db_;
-
-  /// Our history of IMU messages (time, angular, linear)
-  std::shared_ptr<std::vector<ov_core::ImuData>> imu_data_;
+  /// Propagator shared with VIO (source of IMU history snapshots)
+  std::shared_ptr<ov_srvins::Propagator> propagator_;
 };
 
 } // namespace ov_srvins

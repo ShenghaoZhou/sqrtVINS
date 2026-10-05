@@ -7,12 +7,8 @@ set(CATKIN_PACKAGE_LIB_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 set(CATKIN_PACKAGE_BIN_DESTINATION "${CMAKE_INSTALL_BINDIR}")
 set(CATKIN_GLOBAL_INCLUDE_DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
-# Must match the ov_core build type (USE_FLOAT) so that shared types
-# (Vec3, MatX, ...) have the same ABI across all OpenVINS libraries
-option(USE_FLOAT "Use float version when built" ON)
-if(USE_FLOAT)
-    add_definitions(-DUSE_FLOAT=1)
-endif()
+# NOTE: USE_FLOAT is inherited from ov_core_lib (PUBLIC compile definition),
+# keeping the DataType ABI consistent across all libraries.
 
 # Include our header files
 include_directories(
@@ -34,7 +30,6 @@ list(APPEND thirdparty_libraries
 ##################################################
 
 list(APPEND LIBRARY_SOURCES
-        src/dummy.cpp
         src/core/VioManager.cpp
         src/core/VioManagerHelper.cpp
         src/state/State.cpp

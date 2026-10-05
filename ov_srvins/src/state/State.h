@@ -30,6 +30,7 @@
 #ifndef OV_SRVINS_STATE_H
 #define OV_SRVINS_STATE_H
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -202,8 +203,9 @@ public:
   /// Current timestamp (should be the last update time!)
   double timestamp = -1;
 
-  /// Flag to tell us if we have been initialized
-  bool is_initialized = false;
+  /// Flag to tell us if we have been initialized (set from the background
+  /// initialization thread, read from the feeding threads, hence atomic)
+  std::atomic<bool> is_initialized = {false};
 
   /// Struct containing filter options
   StateOptions options;
@@ -235,9 +237,6 @@ public:
   /// Camera intrinsics camera objects
   std::unordered_map<size_t, std::shared_ptr<ov_core::CamBase>>
       cam_intrinsics_cameras;
-
-  /// Timer used to record matrix factorization time
-  std::chrono::steady_clock::time_point rT81, rT82;
 
   /// Buffer for camera poses (non-fej and fej) to avoid recalculation
   CameraPoseBuffer cam_pose_buffer;

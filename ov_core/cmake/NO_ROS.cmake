@@ -8,10 +8,11 @@ set(CATKIN_PACKAGE_LIB_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 set(CATKIN_PACKAGE_BIN_DESTINATION "${CMAKE_INSTALL_BINDIR}")
 set(CATKIN_GLOBAL_INCLUDE_DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/open_vins/")
 
+# Single-precision (float) vs double-precision build. This define is
+# ABI-critical (it sets DataType, hence the layout of Vec3/MatX/...), so it is
+# exported PUBLIC on ov_core_lib and inherited by every module that links it.
+# Do NOT redefine it per-module.
 option(USE_FLOAT "Use float version when built" ON)
-if (USE_FLOAT)
-    add_definitions(-DUSE_FLOAT=1)
-endif ()
 
 # Optional Ocean framework backend for the vision abstraction layer
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/OceanBackend.cmake)
@@ -34,7 +35,6 @@ list(APPEND thirdparty_libraries
 ##################################################
 
 list(APPEND LIBRARY_SOURCES
-        src/dummy.cpp
         src/cpi/CpiV1.cpp
         src/cpi/CpiV2.cpp
         src/track/TrackBase.cpp
@@ -55,6 +55,11 @@ file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_core_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 target_link_libraries(ov_core_lib ${thirdparty_libraries})
 target_include_directories(ov_core_lib PUBLIC src/)
+if (USE_FLOAT)
+    target_compile_definitions(ov_core_lib PUBLIC USE_FLOAT=1)
+else ()
+    target_compile_definitions(ov_core_lib PUBLIC USE_FLOAT=0)
+endif ()
 install(TARGETS ov_core_lib
         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
         LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

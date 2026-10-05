@@ -115,13 +115,9 @@ public:
                             Eigen::Matrix<DataType, 13, 1> &state_plus,
                             Eigen::Matrix<DataType, 12, 12> &covariance);
 
+  /// Gets a copy of the current IMU data history (taken under lock)
   void get_imu_data(std::vector<ov_core::ImuData> &imu_data) {
     imu_handler_.get_imu_data(imu_data);
-  }
-
-  // Point to the same imu data
-  std::shared_ptr<std::vector<ov_core::ImuData>> get_imu_data() {
-    return imu_handler_.get_imu_data();
   }
 
 protected:

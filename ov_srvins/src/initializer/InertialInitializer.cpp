@@ -51,11 +51,8 @@ InertialInitializer::InertialInitializer(
       msckf_options_(msckf_options), slam_options_(slam_options),
       feat_init_options_(feat_init_options) {
 
-  // Vector of our IMU data
-  imu_data_ = propagator->get_imu_data();
-
   // Create initializers
-  init_static_ = std::make_unique<StaticInitializer>(params_, db_, imu_data_);
+  init_static_ = std::make_unique<StaticInitializer>(params_, propagator_);
   init_dynamic_ = std::make_unique<DynamicInitializer>(
       params_, db_, propagator, msckf_options_, slam_options_, feat_init_options_);
 }

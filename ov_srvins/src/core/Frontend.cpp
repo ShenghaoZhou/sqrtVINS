@@ -58,14 +58,10 @@ Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
                  (float)params.state_options.num_cameras);
   if (params.use_klt) {
     // Select the backend that implements the core computer vision operations
-    // (traditional OpenCV by default, or the Ocean framework)
-    std::shared_ptr<ov_core::vision::CVBackend> cv_backend;
-    try {
-      cv_backend = ov_core::vision::CVBackend::create(params.cv_backend);
-    } catch (const std::exception &e) {
-      PRINT_ERROR(RED "[ERROR]: %s\n" RESET, e.what());
-      std::exit(EXIT_FAILURE);
-    }
+    // (traditional OpenCV by default, or the Ocean framework).
+    // CVBackend::create() throws std::runtime_error on an unknown backend.
+    std::shared_ptr<ov_core::vision::CVBackend> cv_backend =
+        ov_core::vision::CVBackend::create(params.cv_backend);
     trackFEATS = std::shared_ptr<TrackBase>(new TrackKLT(
         state->cam_intrinsics_cameras, init_max_features,
         state->options.max_aruco_features, params.use_stereo,

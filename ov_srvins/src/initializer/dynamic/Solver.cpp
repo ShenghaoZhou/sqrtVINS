@@ -27,6 +27,9 @@
 
 
 #include "Solver.h"
+
+#include <stdexcept>
+
 #include "state/Propagator.h"
 #include "state/StateHelper.h"
 #include "utils/Helper.h"
@@ -114,9 +117,8 @@ bool Solver::solve() {
     std::shared_ptr<ov_type::PoseJPL> pose =
         std::dynamic_pointer_cast<ov_type::PoseJPL>(posetemp);
     if (pose == nullptr) {
-      PRINT_ERROR(RED "INVALID OBJECT RETURNED FROM STATEHELPER CLONE, "
-                      "EXITING!#!@#!@#\n" RESET);
-      std::exit(EXIT_FAILURE);
+      throw std::runtime_error(
+          "StateHelper::clone() returned an object that is not a PoseJPL");
     }
     state_->clones_IMU[state_->timestamp] = pose;
 

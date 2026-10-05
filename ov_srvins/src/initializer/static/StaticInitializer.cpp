@@ -46,24 +46,27 @@ using namespace ov_srvins;
 
 StaticInitializer::StaticInitializer(
     const InertialInitializerOptions &params,
-    std::shared_ptr<ov_core::FeatureDatabase> db,
-    std::shared_ptr<std::vector<ov_core::ImuData>> imu_data)
-    : params_(params), db_(db), imu_data_(imu_data) {}
+    std::shared_ptr<ov_srvins::Propagator> propagator)
+    : params_(params), propagator_(propagator) {}
 
 bool StaticInitializer::initialize(std::shared_ptr<ov_srvins::State> state,
                                    double last_static_timestamp) {
-  if (!imu_data_ || imu_data_->size() < 2) {
+  // Take a snapshot of the IMU history under lock: this runs on the background
+  // initialization thread while the main thread keeps feeding IMU data
+  std::vector<ImuData> imu_data;
+  propagator_->get_imu_data(imu_data);
+  if (imu_data.size() < 2) {
     PRINT_INFO(YELLOW "[init-s]: not enough IMU data to initialize\n" RESET);
     return false;
   }
 
   // Newest and oldest imu timestamp
-  double oldesttime = imu_data_->at(0).timestamp;
+  double oldesttime = imu_data.at(0).timestamp;
 
   // First lets collect a window of IMU readings from the oldest timestamp to
   // the last static timestamp for a static window
   std::vector<ImuData> window;
-  for (const ImuData &data : *imu_data_) {
+  for (const ImuData &data : imu_data) {
     if (data.timestamp >= oldesttime &&
         data.timestamp <= last_static_timestamp) {
       window.push_back(data);

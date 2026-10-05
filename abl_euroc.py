@@ -40,11 +40,11 @@ cam1_df = pd.read_csv(os.path.join(dataset_path, 'mav0/cam1/data.csv'))
 for df in (imu_df, cam0_df, cam1_df):
     df.columns = [c.strip().split(' ')[0] for c in df.columns]
 imu_df, cam0_df, cam1_df = imu_df.sort_values('#timestamp'), cam0_df.sort_values('#timestamp'), cam1_df.sort_values('#timestamp')
-imu_times = imu_df['#timestamp'].values / 1e9
+imu_times = imu_df['#timestamp'].values * 1e-9
 imu_wm = imu_df[['w_RS_S_x', 'w_RS_S_y', 'w_RS_S_z']].to_numpy()
 imu_am = imu_df[['a_RS_S_x', 'a_RS_S_y', 'a_RS_S_z']].to_numpy()
-cam0_times = cam0_df['#timestamp'].values / 1e9
-cam1_lookup = {t: i for i, t in enumerate(cam1_df['#timestamp'].values / 1e9)}
+cam0_times = cam0_df['#timestamp'].values * 1e-9
+cam1_lookup = {t: i for i, t in enumerate(cam1_df['#timestamp'].values * 1e-9)}
 
 frontend.set_startup_time(cam0_times[0])
 zero_mask = np.zeros((480, 752), dtype=np.uint8)

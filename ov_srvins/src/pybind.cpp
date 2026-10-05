@@ -6,6 +6,7 @@
 
 #include "core/SqrtEstimator.h"
 #include "core/Frontend.h"
+#include "core/Pipeline.h"
 #include "state/Propagator.h"
 #include "state/State.h"
 #include "utils/sensor_data.h"
@@ -102,7 +103,10 @@ PYBIND11_MODULE(ov_srvins_py, m) {
     py::class_<State, std::shared_ptr<State>>(m, "State")
         .def_readonly("timestamp", &State::timestamp)
         .def_readonly("imu", &State::imu)
-        .def_readonly("is_initialized", &State::is_initialized)
+        .def("cam_imu_timeoffset",
+             [](const State &s) { return (double)s.calib_dt_CAMtoIMU->value()(0); })
+        .def_property_readonly("is_initialized",
+                               [](const State &s) { return s.is_initialized.load(); })
         .def("margtimestep", &State::margtimestep)
         .def("num_clones", [](const State &s) { return (int)s.clones_IMU.size(); })
         .def("clear", &State::clear, py::arg("fully") = false);
@@ -146,49 +150,33 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                }
                self.feed_imu_batch(msgs);
              }, py::arg("timestamps"), py::arg("wm"), py::arg("am"))
-        .def("try_zupt", &SqrtEstimator::try_zupt)
+        .def("try_zupt", &SqrtEstimator::try_zupt, py::arg("timestamp"),
+             py::arg("has_moved_since_zupt") = false)
+        .def("notify_moved", &SqrtEstimator::notify_moved)
+        .def("has_moved_since_zupt", &SqrtEstimator::has_moved_since_zupt)
         .def("propagate", &SqrtEstimator::propagate)
         .def("update", &SqrtEstimator::update)
         .def("propagate_and_update",
              [](SqrtEstimator &self, Frontend &frontend, double timestamp,
                 const std::vector<int> &sensor_ids) {
-               // Mirrors the validated VioManager sequence: propagate,
+               // Canonical per-frame filter step (core/Pipeline.h): propagate,
                // select features against the post-propagation state, update,
                // then clean the tracker databases - all inside a single
                // Python->C++ call with no feature list round-trip.
-               // NOTE: cleanup_measurements must use the margtimestep
-               // captured BEFORE the update (the clone marginalized by the
-               // update) and run only AFTER feature selection; cleaning at
-               // the same timestep selection queries starves the MSCKF/SLAM
-               // update of measurements and corrupts the filter
-               auto state = self.get_state();
-               if (!self.propagate(timestamp))
-                 return false;
-               if ((int)state->clones_IMU.size() <
-                           std::min(state->options.max_clone_size, 5) &&
-                       state->features_SLAM.empty())
-                 return false;
-               if (state->timestamp != timestamp)
-                 return false;
-               bool do_cleanup = (int)state->clones_IMU.size() >
-                                 state->options.max_clone_size + 1;
-               double marg_time = state->margtimestep();
-               std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF, feats_slam;
-               frontend.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam);
-               self.update(featsup_MSCKF, feats_slam);
-               auto feats_db = frontend.get_trackFEATS()->get_feature_database();
-               if (do_cleanup) {
-                 feats_db->cleanup_measurements(marg_time);
-                 if (frontend.get_trackARUCO() != nullptr)
-                   frontend.get_trackARUCO()->get_feature_database()->cleanup_measurements(marg_time);
-               }
-               feats_db->cleanup();
-               if (frontend.get_trackARUCO() != nullptr)
-                 frontend.get_trackARUCO()->get_feature_database()->cleanup();
-               return true;
+               ov_core::CameraData message;
+               message.timestamp = timestamp;
+               message.sensor_ids = sensor_ids;
+               return process_frame(self, frontend, message);
              }, py::arg("frontend"), py::arg("timestamp"), py::arg("sensor_ids"))
+        .def("set_zupt_database", &SqrtEstimator::set_zupt_database)
         .def("get_state", &SqrtEstimator::get_state)
         .def("get_propagator", &SqrtEstimator::get_propagator);
+
+    // Canonical pipeline glue (replaces the removed VioManager)
+    m.def("process_frame", &process_frame,
+          py::arg("estimator"), py::arg("frontend"), py::arg("message"));
+    m.def("finalize_initialization", &finalize_initialization,
+          py::arg("estimator"), py::arg("frontend"), py::arg("params"));
 
     // Bind Propagator
     py::class_<Propagator, std::shared_ptr<Propagator>>(m, "Propagator")

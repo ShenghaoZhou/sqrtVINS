@@ -25,6 +25,8 @@
 
 #include "SqrtEstimator.h"
 
+#include <stdexcept>
+
 #include "feat/Feature.h"
 #include "feat/FeatureDatabase.h"
 #include "state/Propagator.h"
@@ -67,7 +69,8 @@ SqrtEstimator::SqrtEstimator(VioManagerOptions &params_) : params(params_) {
       std::make_shared<Propagator>(params.imu_noises, params.gravity_mag);
 
   // If we are using zero velocity updates, then create the updater
-  // Note: VioManager will set its feature database as we won't have it here
+  // Note: the caller must wire the tracker feature database afterwards via
+  // set_zupt_database() (the frontend does not exist yet at this point)
   if (params.try_zupt) {
     updaterZUPT = std::make_shared<UpdaterZeroVelocity>(
         params.zupt_options, params.imu_noises, nullptr, propagator,
@@ -87,18 +90,23 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
 }
 
 void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
-  // The oldest time we need IMU with is the last clone. Before
-  // initialization, keep only a rolling init_window_time + 0.1 s window:
-  // the static initializer averages the IMU over
+  // Before initialization, keep only a rolling init_window_time + 0.1 s
+  // window: the static initializer averages the IMU over
   // [buffer_oldest, last_static_timestamp], so an untrimmed buffer would
-  // pull pre-static (moving) data into the bias solution (see VioManager)
-  double oldest_time = state->margtimestep();
-  if (oldest_time > state->timestamp) {
-    oldest_time = -1;
-  }
+  // pull pre-static (moving) data into the bias solution (see VioManager).
+  // Use the configured time offset directly (the constructor sets
+  // state->calib_dt_CAMtoIMU from it) so the pre-init path never reads the
+  // state object, which the background initialization thread mutates.
+  double oldest_time;
   if (!state->is_initialized) {
     oldest_time = message.timestamp - params.init_options.init_window_time +
-                  state->calib_dt_CAMtoIMU->value()(0) - 0.1;
+                  params.calib_camimu_dt - 0.1;
+  } else {
+    // The oldest time we need IMU with is the last clone
+    oldest_time = state->margtimestep();
+    if (oldest_time > state->timestamp) {
+      oldest_time = -1;
+    }
   }
   feed_imu(message, oldest_time);
 }
@@ -111,15 +119,15 @@ void SqrtEstimator::feed_imu_batch(
   // NOTE: like feed_measurement_imu, the pre-init trim keeps only a rolling
   // init_window_time + 0.1 s window, so it must be computed per message
   for (const auto &message : messages) {
-    double oldest_time = -1;
-    if (state->is_initialized) {
+    double oldest_time;
+    if (!state->is_initialized) {
+      oldest_time = message.timestamp - params.init_options.init_window_time +
+                    params.calib_camimu_dt - 0.1;
+    } else {
       oldest_time = state->margtimestep();
       if (oldest_time > state->timestamp) {
         oldest_time = -1;
       }
-    } else {
-      oldest_time = message.timestamp - params.init_options.init_window_time +
-                    state->calib_dt_CAMtoIMU->value()(0) - 0.1;
     }
     feed_imu(message, oldest_time);
   }
@@ -129,8 +137,10 @@ bool SqrtEstimator::try_zupt(double timestamp, bool has_moved_since_zupt) {
   if (updaterZUPT == nullptr)
     return false;
 
-  // Check if we have moved since the last ZUPT update
-  if (params.zupt_only_at_beginning && has_moved_since_zupt)
+  // Check if we have moved since the last ZUPT update (internal bookkeeping
+  // flag OR-ed with any caller-tracked flag)
+  if (params.zupt_only_at_beginning &&
+      (has_moved_since_zupt_ || has_moved_since_zupt))
     return false;
 
   // No ZUPT if slamming
@@ -178,9 +188,8 @@ bool SqrtEstimator::propagate(double timestamp) {
     std::shared_ptr<ov_type::PoseJPL> pose =
         std::dynamic_pointer_cast<ov_type::PoseJPL>(posetemp);
     if (pose == nullptr) {
-      PRINT_ERROR(RED "INVALID OBJECT RETURNED FROM STATEHELPER CLONE, "
-                      "EXITING!#!@#!@#\n" RESET);
-      std::exit(EXIT_FAILURE);
+      throw std::runtime_error(
+          "StateHelper::clone() returned an object that is not a PoseJPL");
     }
     state->clones_IMU[state->timestamp] = pose;
 

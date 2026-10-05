@@ -43,6 +43,7 @@
 
 #include "euroc_common.h"
 #include "core/Frontend.h"
+#include "core/Pipeline.h"
 #include "core/SqrtEstimator.h"
 #include "core/VioManagerOptions.h"
 #include "initializer/InertialInitializer.h"
@@ -67,6 +68,9 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
 
   auto estimator = std::make_shared<SqrtEstimator>(params);
   auto frontend = std::make_shared<Frontend>(params, estimator->get_state());
+  // Wire the tracker database into the ZUPT updater (disparity check)
+  estimator->set_zupt_database(
+      frontend->get_trackFEATS()->get_feature_database());
   auto initializer = std::make_shared<InertialInitializer>(
       params.init_options,
       frontend->get_trackFEATS()->get_feature_database(),
@@ -89,7 +93,6 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   cv::Mat zero_mask;
   size_t imu_idx = 0;
   int processed = 0;
-  bool has_moved_since_zupt = false;
   auto t_start = std::chrono::steady_clock::now();
 
   for (const auto &cam : cam_data) {
@@ -142,67 +145,26 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
 
     auto state = estimator->get_state();
 
-    // Check for initialization
+    // Check for initialization (synchronous)
     if (!state->is_initialized) {
-      // Mirror VioManager::try_to_initialize: without ZUPT we must wait for a
-      // jerk before the static initializer will use the stationary window
+      // Without ZUPT we must wait for a jerk before the static initializer
+      // will use the stationary window
       if (initializer->initialize(state, !params.try_zupt)) {
         PRINT_INFO("VIO Initialized at %.4f!\n", curr_cam_time);
-        frontend->set_startup_time(curr_cam_time);
-        // Post-init bookkeeping from VioManager::try_to_initialize
-        frontend->get_trackFEATS()->get_feature_database()->cleanup_measurements(
-            state->timestamp);
-        frontend->get_trackFEATS()->set_num_features(
-            std::floor((double)params.num_pts /
-                       (double)params.state_options.num_cameras));
-        if (state->imu->vel().norm() > params.zupt_max_velocity)
-          has_moved_since_zupt = true;
+        finalize_initialization(*estimator, *frontend, params);
       }
       processed++;
       continue;
     }
 
     // Try a zero-velocity update
-    if (estimator->try_zupt(curr_cam_time, has_moved_since_zupt)) {
+    if (estimator->try_zupt(curr_cam_time)) {
       processed++;
       continue;
     }
 
     // Propagation, feature selection, update, and database cleanup
-    // (mirrors the fused propagate_and_update of the Python bindings)
-    bool did_update = false;
-    if (estimator->propagate(curr_cam_time)) {
-      bool too_early = (int)state->clones_IMU.size() <
-                           std::min(state->options.max_clone_size, 5) &&
-                       state->features_SLAM.empty();
-      if (!too_early && state->timestamp == curr_cam_time) {
-        // Capture the marginalization time and cleanup gate BEFORE the update:
-        // the update will marginalize the clone at this time, so measurements
-        // up to it can be dropped only AFTER selection has used them
-        bool do_cleanup = (int)state->clones_IMU.size() >
-                          state->options.max_clone_size + 1;
-        double marg_time = state->margtimestep();
-        std::vector<std::shared_ptr<Feature>> featsup_MSCKF, feats_slam;
-        frontend->process_measurements_rules(curr_cam_time, message.sensor_ids,
-                                             featsup_MSCKF, feats_slam);
-        estimator->update(featsup_MSCKF, feats_slam);
-        if (do_cleanup) {
-          frontend->get_trackFEATS()
-              ->get_feature_database()
-              ->cleanup_measurements(marg_time);
-          if (frontend->get_trackARUCO() != nullptr)
-            frontend->get_trackARUCO()
-                ->get_feature_database()
-                ->cleanup_measurements(marg_time);
-        }
-        frontend->get_trackFEATS()->get_feature_database()->cleanup();
-        if (frontend->get_trackARUCO() != nullptr)
-          frontend->get_trackARUCO()->get_feature_database()->cleanup();
-        did_update = true;
-      }
-    }
-    if (did_update)
-      has_moved_since_zupt = true;
+    process_frame(*estimator, *frontend, message);
 
     // Record state (OpenVINS estimate format: p_IinG and JPL q_GtoI)
     state = estimator->get_state();

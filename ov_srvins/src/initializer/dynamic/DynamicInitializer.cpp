@@ -358,8 +358,10 @@ bool DynamicInitializer::initialize(std::shared_ptr<State> &state) {
 
   // Solve the problem
   if (!srf_solver.solve()) {
-    state = std::make_shared<State>(state->options,
-                                    state->init_options); // Reset the state
+    // Reset the state in place. Do NOT reassign the shared_ptr here: this runs
+    // on the background initialization thread, other components (e.g. the
+    // estimator) hold copies of the pointer, and initialize_state() already
+    // performs a full reset of the state object.
     StateHelper::initialize_state(state, VecX::Zero(15), -1);
     return false;
   }

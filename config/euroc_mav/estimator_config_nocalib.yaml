@@ -10,9 +10,9 @@ max_cameras: 2 # how many cameras we have 1: mono, 2: stereo, >2: binocular (all
 use_imuavg: true
 use_rk4int: true
 
-calib_cam_extrinsics: true # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
-calib_cam_intrinsics: true # if camera intrinsics should be optimized (focal, center, distortion)
-calib_cam_timeoffset: true # if timeoffset between camera and IMU should be optimized
+calib_cam_extrinsics: false # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
+calib_cam_intrinsics: false # if camera intrinsics should be optimized (focal, center, distortion)
+calib_cam_timeoffset: false # if timeoffset between camera and IMU should be optimized
 calib_imu_intrinsics: false # if imu intrinsics should be calibrated (rotation and skew-scale matrix)
 calib_imu_g_sensitivity: false # if gyroscope gravity sensitivity (Tg) should be calibrated
 
@@ -92,7 +92,6 @@ init_metadata_log_file_path: /tmp/init_window_timing.txt
 
 use_bg_estimator: true # if we should estimate the gyroscope bias
 init_dyn_use: false # if dynamic initialization should be used
-init_async: false # run the (expensive) dynamic init solve on a background thread over state/IMU/feature snapshots; keep false for deterministic offline runs
 init_dyn_num_pose: 5 # number of poses to use within our window time
 init_dyn_min_deg: -1 # orientation change needed to try to init
 

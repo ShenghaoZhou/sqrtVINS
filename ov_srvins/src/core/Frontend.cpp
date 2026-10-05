@@ -38,14 +38,16 @@
 #include "track/TrackKLT.h"
 #include "vision/CVBackend.h"
 
+#include "Pipeline.h"
 #include "state/State.h"
 #include "utils/print.h"
 
 using namespace ov_core;
 using namespace ov_srvins;
 
-Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
-    : params(params_), state(state_) {
+Frontend::Frontend(const VinsOptions &params_,
+                   std::shared_ptr<State> state_)
+    : params(params_) {
 
   // Globally set the thread count and RNG seed so direct Frontend users
   // (e.g. the Python bindings) match the VioManager configuration
@@ -63,14 +65,14 @@ Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
     std::shared_ptr<ov_core::vision::CVBackend> cv_backend =
         ov_core::vision::CVBackend::create(params.cv_backend);
     trackFEATS = std::shared_ptr<TrackBase>(new TrackKLT(
-        state->cam_intrinsics_cameras, init_max_features,
-        state->options.max_aruco_features, params.use_stereo,
+        state_->cam_intrinsics_cameras, init_max_features,
+        state_->options.max_aruco_features, params.use_stereo,
         params.histogram_method, params.fast_threshold, params.grid_x,
         params.grid_y, params.min_px_dist, params.ransac_th, cv_backend));
   } else {
     trackFEATS = std::shared_ptr<TrackBase>(new TrackDescriptor(
-        state->cam_intrinsics_cameras, init_max_features,
-        state->options.max_aruco_features, params.use_stereo,
+        state_->cam_intrinsics_cameras, init_max_features,
+        state_->options.max_aruco_features, params.use_stereo,
         params.histogram_method, params.fast_threshold, params.grid_x,
         params.grid_y, params.min_px_dist, params.knn_ratio));
   }
@@ -78,7 +80,7 @@ Frontend::Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_)
   // Initialize our aruco tag extractor
   if (params.use_aruco) {
     trackARUCO = std::shared_ptr<TrackBase>(new TrackAruco(
-        state->cam_intrinsics_cameras, state->options.max_aruco_features,
+        state_->cam_intrinsics_cameras, state_->options.max_aruco_features,
         params.use_stereo, params.histogram_method, params.downsize_aruco));
   }
 }
@@ -101,7 +103,8 @@ void Frontend::feed_camera(ov_core::CameraData &message) {
 }
 
 void Frontend::process_measurements_rules(
-    double timestamp, const std::vector<int> &sensor_ids,
+    const std::shared_ptr<State> &state, double timestamp,
+    const std::vector<int> &sensor_ids,
     std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
     std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam) {
 
@@ -164,7 +167,7 @@ void Frontend::process_measurements_rules(
 
   int curr_aruco_tags = 0;
   for (auto &f : state->features_SLAM)
-    if ((int)f.second->featid <= 4 * state->options.max_aruco_features)
+    if (is_aruco_landmark(state, f.second->featid))
       curr_aruco_tags++;
 
   if (state->options.max_slam_features > 0 &&
@@ -232,7 +235,8 @@ void Frontend::process_measurements_rules(
 
 }
 
-cv::Mat Frontend::get_historical_viz_image(bool did_zupt, bool is_init) {
+cv::Mat Frontend::get_historical_viz_image(
+    const std::shared_ptr<State> &state, bool did_zupt, bool is_init) {
   if (state == nullptr || trackFEATS == nullptr)
     return cv::Mat();
   std::vector<size_t> highlighted_ids;

@@ -11,25 +11,17 @@ import ov_srvins_py as vins
 
 def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
     # 1. Setup options
-    options = vins.VioManagerOptions()
+    options = vins.VinsOptions()
     parser = vins.YamlParser(config_path)
     options.print_and_load(parser)
     if cv_backend is not None:
         options.cv_backend = cv_backend
 
-    # 2. Initialize Estimator and Frontend
-    estimator = vins.SqrtEstimator(options)
-    frontend = vins.Frontend(options, estimator.get_state())
-
-    # 3. Setup Initializer
-    initializer = vins.InertialInitializer(
-        options.init_options,
-        frontend.get_trackFEATS().get_feature_database(),
-        estimator.get_propagator(),
-        options.msckf_options,
-        options.slam_options,
-        options.featinit_options
-    )
+    # 2. Construct the fully wired pipeline (estimator, frontend, initializer,
+    # init runner handles init + post-init bookkeeping)
+    system = vins.System.create(options)
+    estimator, frontend = system.estimator, system.frontend
+    init_runner = system.init_runner
 
     # 4. Load Data
     imu_df = pd.read_csv(os.path.join(dataset_path, 'mav0/imu0/data.csv'))
@@ -64,7 +56,6 @@ def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
     trajectory = []
     timestamps = []
     num_feats = []
-    has_moved_since_zupt = False
 
     # Skip camera frames before the first IMU
     while cam_idx < len(cam_times) and cam_times[cam_idx] < imu_times[0]:
@@ -79,7 +70,9 @@ def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
         curr_cam_time = cam_times[cam_idx]
 
         # Feed IMU measurements up to this camera time in one batched call
-        k = np.searchsorted(imu_times, curr_cam_time, side='right')
+        # (feeding policy shared with the C++ runner)
+        t_off = estimator.get_state().cam_imu_timeoffset()
+        k = vins.imu_batch_end(imu_times, imu_idx, curr_cam_time + t_off)
         if k > imu_idx:
             estimator.feed_imu_batch(imu_times[imu_idx:k], imu_wm[imu_idx:k], imu_am[imu_idx:k])
             imu_idx = k
@@ -104,27 +97,22 @@ def run_vio(dataset_path, config_path, max_frames=1000, cv_backend=None):
 
             state = estimator.get_state()
 
-            # Check for initialization
+            # Check for initialization (post-init bookkeeping included)
             if not state.is_initialized:
-                if initializer.initialize(state, not options.try_zupt):
+                if init_runner.try_initialize(curr_cam_time, not options.try_zupt):
                     print(f"VIO Initialized at {curr_cam_time}!")
-                    frontend.set_startup_time(curr_cam_time)
-                    frontend.get_trackFEATS().get_feature_database().cleanup_measurements(state.timestamp)
-                    if np.linalg.norm(state.imu.vel()) > options.zupt_max_velocity:
-                        has_moved_since_zupt = True
                 cam_idx += 1
                 processed += 1
                 continue
 
-            # Try a zero-velocity update
-            if estimator.try_zupt(curr_cam_time, has_moved_since_zupt):
+            # Try a zero-velocity update (motion bookkeeping is internal)
+            if estimator.try_zupt(curr_cam_time):
                 cam_idx += 1
                 processed += 1
                 continue
 
             # Propagation, feature selection, update, and database cleanup
-            if estimator.propagate_and_update(frontend, curr_cam_time, [0, 1]):
-                has_moved_since_zupt = True
+            estimator.process_frame(frontend, curr_cam_time, [0, 1])
         except Exception as e:
             print(f"Error at frame {cam_idx}: {e}")
 

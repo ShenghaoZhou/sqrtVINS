@@ -3,7 +3,7 @@
 Toggles (all default OFF = original orchestration):
   --batch    feed IMU via feed_imu_batch (proper oldest_time) instead of per-msg feed_imu(-1)
   --cleanup  call FeatureDatabase cleanup_measurements/cleanup like VioManager does
-  --fused    use propagate_and_update (implies cleanup) instead of split calls
+  --fused    use process_frame (implies cleanup) instead of split calls
   --zupt     call estimator.try_zupt each frame
 Saves trajectory npz and prints timing.
 """
@@ -24,7 +24,7 @@ name = ('abl_' + '_'.join(k[2:] for k in flags if flags[k]) + f'_{tag}') or 'abl
 if not any(flags.values()):
     name = f'abl_base_{tag}'
 
-options = vins.VioManagerOptions()
+options = vins.VinsOptions()
 options.print_and_load(vins.YamlParser(config_path))
 estimator = vins.SqrtEstimator(options)
 frontend = vins.Frontend(options, estimator.get_state())
@@ -110,12 +110,12 @@ for i in range(len(cam0_times)):
                 print(f"VIO Initialized at frame {i}")
             continue
 
-        if flags['--zupt'] and estimator.try_zupt(curr_cam_time, True):
+        if flags['--zupt'] and estimator.try_zupt(curr_cam_time):
             continue
 
         t0 = time.perf_counter()
         if flags['--fused']:
-            estimator.propagate_and_update(frontend, curr_cam_time, [0, 1])
+            estimator.process_frame(frontend, curr_cam_time, [0, 1])
         elif flags['--propfirst']:
             # VioManager order: propagate, optional pre-rules cleanup, rules, update
             ok = estimator.propagate(curr_cam_time)
@@ -123,18 +123,20 @@ for i in range(len(cam0_times)):
                 state = estimator.get_state()
                 if flags['--cleanuppre'] and state.num_clones() > options.state_options.max_clone_size + 1:
                     db.cleanup_measurements(state.margtimestep())
-            feats_msckf, feats_up, feats_delayed = frontend.process_measurements_rules(curr_cam_time, [0, 1])
+            feats_msckf, feats_slam = frontend.process_measurements_rules(state, curr_cam_time, [0, 1])
             if ok:
-                estimator.update(feats_msckf, feats_up, feats_delayed)
+                estimator.update(feats_msckf, feats_slam)
+                estimator.notify_moved()
             if flags['--cleanup']:
                 state = estimator.get_state()
                 if state.num_clones() > options.state_options.max_clone_size + 1:
                     db.cleanup_measurements(state.margtimestep())
                 db.cleanup()
         else:
-            feats_msckf, feats_up, feats_delayed = frontend.process_measurements_rules(curr_cam_time, [0, 1])
+            feats_msckf, feats_slam = frontend.process_measurements_rules(state, curr_cam_time, [0, 1])
             if estimator.propagate(curr_cam_time):
-                estimator.update(feats_msckf, feats_up, feats_delayed)
+                estimator.update(feats_msckf, feats_slam)
+                estimator.notify_moved()
             if flags['--cleanup']:
                 state = estimator.get_state()
                 if state.num_clones() > options.state_options.max_clone_size + 1:

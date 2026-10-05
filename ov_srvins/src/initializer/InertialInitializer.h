@@ -72,6 +72,42 @@ public:
 
   bool initialize(std::shared_ptr<ov_srvins::State> &state, bool wait_for_jerk);
 
+  /// Which initializer the readiness/jerk logic selected
+  enum class InitMethod { NONE, STATIC, DYNAMIC };
+
+  /**
+   * @brief Run the readiness checks (window size, disparity) and jerk logic
+   * to select an initialization method, WITHOUT running the solve.
+   *
+   * This performs the same database scans/cleanup as initialize() and is
+   * cheap. If it returns true, the caller MUST run the selected method
+   * (run_static / run_dynamic, or nothing for NONE) and then call
+   * finish_attempt() exactly once to update the jerk bookkeeping.
+   *
+   * @param wait_for_jerk If true we will wait for a "jerk"
+   * @param method Output: selected initialization method
+   * @return False if the system is not ready to attempt initialization
+   * (window not full or disparity check failed); true if an attempt should
+   * be made (method may still be NONE when init must be skipped)
+   */
+  bool choose_method(bool wait_for_jerk, InitMethod &method);
+
+  /// Run the static initializer (call only after choose_method -> STATIC)
+  bool run_static(std::shared_ptr<ov_srvins::State> &state) {
+    return init_static_->initialize(state, prev_static_timestamp_);
+  }
+
+  /// Run the dynamic initializer (call only after choose_method -> DYNAMIC)
+  bool run_dynamic(std::shared_ptr<ov_srvins::State> &state) {
+    return init_dynamic_->initialize(state);
+  }
+
+  /// Update the jerk bookkeeping after an attempt (see choose_method)
+  void finish_attempt();
+
+  /// Oldest camera time of the init window used by the last choose_method
+  double last_oldest_win_time() const { return last_oldest_win_time_; }
+
 protected:
   /// Initialization parameters
   InertialInitializerOptions params_;
@@ -100,6 +136,11 @@ protected:
 
   // Record the previous static timestamp
   double prev_static_timestamp_ = -1;
+
+  // Cached by choose_method for finish_attempt / the async runner
+  bool last_is_still_ = false;
+  double last_latest_cam_time_ = -1;
+  double last_oldest_win_time_ = -1;
 };
 
 } // namespace ov_srvins

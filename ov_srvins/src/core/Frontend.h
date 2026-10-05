@@ -30,7 +30,7 @@
 #include <memory>
 #include <vector>
 #include <opencv2/opencv.hpp>
-#include "VioManagerOptions.h"
+#include "VinsOptions.h"
 #include "state/State.h"
 #include "track/TrackBase.h"
 
@@ -42,7 +42,15 @@ namespace ov_srvins {
 
 class Frontend {
 public:
-  Frontend(VioManagerOptions &params_, std::shared_ptr<State> state_);
+  /**
+   * @brief Constructor
+   *
+   * The state is only read at construction time (camera models); the
+   * frontend does NOT retain it. Selection rules and visualization take the
+   * current state per call, so a state swap (async init commit) can never
+   * leave the frontend pointing at a stale object.
+   */
+  Frontend(const VinsOptions &params_, std::shared_ptr<State> state_);
 
   void feed_camera(ov_core::CameraData &message);
 
@@ -50,20 +58,24 @@ public:
   // must happen after StateHelper::marginalize_slam (inside the estimator
   // update), matching VioManager/open_vins ordering
   void process_measurements_rules(
-      double timestamp, const std::vector<int> &sensor_ids,
+      const std::shared_ptr<State> &state, double timestamp,
+      const std::vector<int> &sensor_ids,
       std::vector<std::shared_ptr<ov_core::Feature>> &featsup_MSCKF,
       std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam);
 
   std::shared_ptr<ov_core::TrackBase> get_trackFEATS() { return trackFEATS; }
   std::shared_ptr<ov_core::TrackBase> get_trackARUCO() { return trackARUCO; }
 
-  cv::Mat get_historical_viz_image(bool did_zupt, bool is_init);
+  cv::Mat get_historical_viz_image(const std::shared_ptr<State> &state,
+                                   bool did_zupt, bool is_init);
 
   void set_startup_time(double t) { startup_time = t; }
 
 private:
-  VioManagerOptions &params;
-  std::shared_ptr<State> state;
+  /// System parameters (copy, like SqrtEstimator/InitRunner: a reference
+  /// member would dangle if the caller's options object dies first, which
+  /// the Python bindings cannot guard against)
+  VinsOptions params;
   std::shared_ptr<ov_core::TrackBase> trackFEATS;
   std::shared_ptr<ov_core::TrackBase> trackARUCO;
   double startup_time = -1;

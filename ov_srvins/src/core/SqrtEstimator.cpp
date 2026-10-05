@@ -25,6 +25,7 @@
 
 #include "SqrtEstimator.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "feat/Feature.h"
@@ -42,7 +43,8 @@ using namespace ov_core;
 using namespace ov_type;
 using namespace ov_srvins;
 
-SqrtEstimator::SqrtEstimator(VioManagerOptions &params_) : params(params_) {
+SqrtEstimator::SqrtEstimator(const VinsOptions &params_)
+    : params(params_) {
   // Create the state!!
   state = std::make_shared<State>(params.state_options, params.init_options);
 
@@ -89,58 +91,45 @@ void SqrtEstimator::feed_imu(const ov_core::ImuData &message,
   }
 }
 
-void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
-  // Before initialization, keep only a rolling init_window_time + 0.1 s
-  // window: the static initializer averages the IMU over
-  // [buffer_oldest, last_static_timestamp], so an untrimmed buffer would
-  // pull pre-static (moving) data into the bias solution (see VioManager).
+double SqrtEstimator::compute_oldest_imu_time(double timestamp) const {
   // Use the configured time offset directly (the constructor sets
   // state->calib_dt_CAMtoIMU from it) so the pre-init path never reads the
   // state object, which the background initialization thread mutates.
-  double oldest_time;
   if (!state->is_initialized) {
-    oldest_time = message.timestamp - params.init_options.init_window_time +
-                  params.calib_camimu_dt - 0.1;
-  } else {
-    // The oldest time we need IMU with is the last clone
-    oldest_time = state->margtimestep();
-    if (oldest_time > state->timestamp) {
-      oldest_time = -1;
+    double oldest_time = timestamp - params.init_options.init_window_time +
+                         params.calib_camimu_dt - 0.1;
+    // While an async initialization solve is in flight, keep enough history
+    // for the post-commit catch-up propagation
+    if (trim_floor_pin_ >= 0) {
+      oldest_time = std::min(oldest_time, trim_floor_pin_);
     }
+    return oldest_time;
   }
-  feed_imu(message, oldest_time);
+  // The oldest time we need IMU with is the last clone
+  double oldest_time = state->margtimestep();
+  if (oldest_time > state->timestamp) {
+    oldest_time = -1;
+  }
+  return oldest_time;
+}
+
+void SqrtEstimator::feed_measurement_imu(const ov_core::ImuData &message) {
+  feed_imu(message, compute_oldest_imu_time(message.timestamp));
 }
 
 void SqrtEstimator::feed_imu_batch(
     const std::vector<ov_core::ImuData> &messages) {
-  if (messages.empty()) {
-    return;
-  }
-  // NOTE: like feed_measurement_imu, the pre-init trim keeps only a rolling
-  // init_window_time + 0.1 s window, so it must be computed per message
   for (const auto &message : messages) {
-    double oldest_time;
-    if (!state->is_initialized) {
-      oldest_time = message.timestamp - params.init_options.init_window_time +
-                    params.calib_camimu_dt - 0.1;
-    } else {
-      oldest_time = state->margtimestep();
-      if (oldest_time > state->timestamp) {
-        oldest_time = -1;
-      }
-    }
-    feed_imu(message, oldest_time);
+    feed_imu(message, compute_oldest_imu_time(message.timestamp));
   }
 }
 
-bool SqrtEstimator::try_zupt(double timestamp, bool has_moved_since_zupt) {
+bool SqrtEstimator::try_zupt(double timestamp) {
   if (updaterZUPT == nullptr)
     return false;
 
-  // Check if we have moved since the last ZUPT update (internal bookkeeping
-  // flag OR-ed with any caller-tracked flag)
-  if (params.zupt_only_at_beginning &&
-      (has_moved_since_zupt_ || has_moved_since_zupt))
+  // Check if we have moved since the last ZUPT update
+  if (params.zupt_only_at_beginning && has_moved_since_zupt_)
     return false;
 
   // No ZUPT if slamming
@@ -251,10 +240,7 @@ void SqrtEstimator::update(
 void SqrtEstimator::set_zupt_database(
     std::shared_ptr<ov_core::FeatureDatabase> db) {
   if (updaterZUPT != nullptr) {
-    updaterZUPT = std::make_shared<UpdaterZeroVelocity>(
-        params.zupt_options, params.imu_noises, db, propagator,
-        params.gravity_mag, params.zupt_max_velocity,
-        params.zupt_noise_multiplier, params.zupt_max_disparity);
+    updaterZUPT->set_feature_database(std::move(db));
   }
 }
 

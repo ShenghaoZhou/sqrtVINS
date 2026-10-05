@@ -121,6 +121,11 @@ public:
    */
   bool try_update(std::shared_ptr<State> state, double timestamp);
 
+  /// Set the feature tracker database used by the disparity check
+  void set_feature_database(std::shared_ptr<ov_core::FeatureDatabase> db) {
+    db_ = std::move(db);
+  }
+
 protected:
   /// Options used during update (chi2 multiplier)
   UpdaterOptions options_;

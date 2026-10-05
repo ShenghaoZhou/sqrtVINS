@@ -3,7 +3,7 @@
 --old : per-message ImuData construction + feed_imu(-1) + split
         process_measurements_rules / propagate / update, no database cleanup
         (the pre-fix orchestration).
-default: batched IMU feed + fused propagate_and_update + ZUPT + cleanup
+default: batched IMU feed + fused process_frame + ZUPT + cleanup
         (the new orchestration).
 
 Image reading is excluded from timing in both modes.
@@ -22,7 +22,7 @@ OLD = '--old' in sys.argv
 dataset_path = sys.argv[sys.argv.index('--dataset') + 1] if '--dataset' in sys.argv else '/media/shzhou/T7_2/asl_dataset/euroc_mav/MH_01_easy/'
 config_path = 'config/euroc_mav/estimator_config.yaml'
 
-options = vins.VioManagerOptions()
+options = vins.VinsOptions()
 options.print_and_load(vins.YamlParser(config_path))
 estimator = vins.SqrtEstimator(options)
 frontend = vins.Frontend(options, estimator.get_state())
@@ -101,16 +101,17 @@ for i in range(n_frames):
             continue
 
         if not OLD:
-            if estimator.try_zupt(curr_cam_time, True):
+            if estimator.try_zupt(curr_cam_time):
                 continue
 
         t0 = time.perf_counter()
         if OLD:
-            feats_msckf, feats_up, feats_delayed = frontend.process_measurements_rules(curr_cam_time, [0, 1])
+            feats_msckf, feats_slam = frontend.process_measurements_rules(state, curr_cam_time, [0, 1])
             if estimator.propagate(curr_cam_time):
-                estimator.update(feats_msckf, feats_up, feats_delayed)
+                estimator.update(feats_msckf, feats_slam)
+                estimator.notify_moved()
         else:
-            estimator.propagate_and_update(frontend, curr_cam_time, [0, 1])
+            estimator.process_frame(frontend, curr_cam_time, [0, 1])
         t_estimator += time.perf_counter() - t0
         state = estimator.get_state()
         if state.is_initialized:

@@ -36,7 +36,7 @@
 
 #include "Frontend.h"
 #include "SqrtEstimator.h"
-#include "VioManagerOptions.h"
+#include "VinsOptions.h"
 #include "state/State.h"
 
 using namespace ov_core;
@@ -76,8 +76,9 @@ bool ov_srvins::process_frame(SqrtEstimator &estimator, Frontend &frontend,
 
   // Sorting features according to rules
   std::vector<std::shared_ptr<Feature>> feats_slam, featsup_MSCKF;
-  frontend.process_measurements_rules(message.timestamp, message.sensor_ids,
-                                      featsup_MSCKF, feats_slam);
+  frontend.process_measurements_rules(state, message.timestamp,
+                                      message.sensor_ids, featsup_MSCKF,
+                                      feats_slam);
 
   // Estimator update
   estimator.update(featsup_MSCKF, feats_slam);
@@ -109,7 +110,7 @@ bool ov_srvins::process_frame(SqrtEstimator &estimator, Frontend &frontend,
 
 void ov_srvins::finalize_initialization(SqrtEstimator &estimator,
                                         Frontend &frontend,
-                                        const VioManagerOptions &params) {
+                                        const VinsOptions &params) {
   auto state = estimator.get_state();
 
   frontend.set_startup_time(state->timestamp);
@@ -133,42 +134,38 @@ void ov_srvins::finalize_initialization(SqrtEstimator &estimator,
   }
 }
 
-std::vector<Vec3>
-ov_srvins::get_features_SLAM(const std::shared_ptr<State> &state) {
-  std::vector<Vec3> slam_feats;
+bool ov_srvins::is_aruco_landmark(const std::shared_ptr<State> &state,
+                                  size_t featid) {
+  return (int)featid <= 4 * state->options.max_aruco_features;
+}
+
+/// Global positions of the SLAM landmarks selected by `want_aruco`
+static std::vector<Vec3> collect_landmarks(const std::shared_ptr<State> &state,
+                                           bool want_aruco) {
+  std::vector<Vec3> feats;
   for (auto &f : state->features_SLAM) {
-    if ((int)f.first <= 4 * state->options.max_aruco_features)
+    if (ov_srvins::is_aruco_landmark(state, f.first) != want_aruco)
       continue;
     if (ov_type::LandmarkRepresentation::is_relative_representation(
             f.second->feat_representation)) {
       assert(f.second->anchor_cam_id != -1);
       const auto anchor_pose = state->cam_pose_buffer.get_buffer_unsafe(
           f.second->anchor_cam_id, f.second->anchor_clone_timestamp);
-      slam_feats.push_back(anchor_pose.R_GtoC.transpose() *
-                               f.second->get_xyz(false) +
-                           anchor_pose.p_CinG);
+      feats.push_back(anchor_pose.R_GtoC.transpose() *
+                          f.second->get_xyz(false) +
+                      anchor_pose.p_CinG);
     } else
-      slam_feats.push_back(f.second->get_xyz(false));
+      feats.push_back(f.second->get_xyz(false));
   }
-  return slam_feats;
+  return feats;
+}
+
+std::vector<Vec3>
+ov_srvins::get_features_SLAM(const std::shared_ptr<State> &state) {
+  return collect_landmarks(state, false);
 }
 
 std::vector<Vec3>
 ov_srvins::get_features_ARUCO(const std::shared_ptr<State> &state) {
-  std::vector<Vec3> aruco_feats;
-  for (auto &f : state->features_SLAM) {
-    if ((int)f.first > 4 * state->options.max_aruco_features)
-      continue;
-    if (ov_type::LandmarkRepresentation::is_relative_representation(
-            f.second->feat_representation)) {
-      assert(f.second->anchor_cam_id != -1);
-      const auto anchor_pose = state->cam_pose_buffer.get_buffer_unsafe(
-          f.second->anchor_cam_id, f.second->anchor_clone_timestamp);
-      aruco_feats.push_back(anchor_pose.R_GtoC.transpose() *
-                                f.second->get_xyz(false) +
-                            anchor_pose.p_CinG);
-    } else
-      aruco_feats.push_back(f.second->get_xyz(false));
-  }
-  return aruco_feats;
+  return collect_landmarks(state, true);
 }

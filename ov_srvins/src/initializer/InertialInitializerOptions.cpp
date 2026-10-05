@@ -46,6 +46,7 @@ void InertialInitializerOptions::print_and_load_initializer(
     parser->parse_config("init_max_features", init_max_features, false);
     parser->parse_config("init_max_slam", init_max_slam, false);
     parser->parse_config("init_dyn_use", init_dyn_use, false);
+    parser->parse_config("init_async", init_async, false);
     parser->parse_config("init_dyn_mle_max_iter", init_dyn_mle_max_iter, false);
 
     parser->parse_config("init_dyn_num_pose", init_dyn_num_pose, false);

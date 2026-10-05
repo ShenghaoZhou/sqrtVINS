@@ -180,6 +180,16 @@ public:
   }
 
   /**
+   * @brief Insert a fully-populated feature (e.g. a snapshot copy) under the
+   * given id. Replaces any existing feature with the same id. (The id is
+   * passed explicitly so this header does not need the full Feature type.)
+   */
+  void insert_feature(size_t featid, const std::shared_ptr<Feature> &feat) {
+    std::lock_guard<std::mutex> lck(mtx);
+    features_idlookup[featid] = feat;
+  }
+
+  /**
    * @brief Gets the oldest time in the database
    */
   double get_oldest_timestamp();

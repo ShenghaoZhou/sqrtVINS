@@ -6,11 +6,13 @@
 
 #include "core/SqrtEstimator.h"
 #include "core/Frontend.h"
+#include "core/InitRunner.h"
 #include "core/Pipeline.h"
+#include "core/System.h"
 #include "state/Propagator.h"
 #include "state/State.h"
 #include "utils/sensor_data.h"
-#include "core/VioManagerOptions.h"
+#include "core/VinsOptions.h"
 #include "initializer/InertialInitializer.h"
 #include "initializer/InertialInitializerOptions.h"
 #include "feat/FeatureDatabase.h"
@@ -66,23 +68,24 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def(py::init<>())
         .def_readwrite("init_window_time", &InertialInitializerOptions::init_window_time)
         .def_readwrite("init_max_features", &InertialInitializerOptions::init_max_features)
-        .def_readwrite("init_dyn_use", &InertialInitializerOptions::init_dyn_use);
+        .def_readwrite("init_dyn_use", &InertialInitializerOptions::init_dyn_use)
+        .def_readwrite("init_async", &InertialInitializerOptions::init_async);
 
-    py::class_<VioManagerOptions>(m, "VioManagerOptions")
+    py::class_<VinsOptions>(m, "VinsOptions")
         .def(py::init<>())
-        .def("print_and_load", &VioManagerOptions::print_and_load, py::arg("parser") = nullptr)
-        .def_readwrite("state_options", &VioManagerOptions::state_options)
-        .def_readwrite("init_options", &VioManagerOptions::init_options)
-        .def_readwrite("imu_noises", &VioManagerOptions::imu_noises)
-        .def_readwrite("msckf_options", &VioManagerOptions::msckf_options)
-        .def_readwrite("slam_options", &VioManagerOptions::slam_options)
-        .def_readwrite("featinit_options", &VioManagerOptions::featinit_options)
-        .def_readwrite("try_zupt", &VioManagerOptions::try_zupt)
-        .def_readwrite("zupt_max_velocity", &VioManagerOptions::zupt_max_velocity)
-        .def_readwrite("num_pts", &VioManagerOptions::num_pts)
-        .def_readwrite("use_mask", &VioManagerOptions::use_mask)
-        .def_readwrite("num_opencv_threads", &VioManagerOptions::num_opencv_threads)
-        .def_readwrite("cv_backend", &VioManagerOptions::cv_backend);
+        .def("print_and_load", &VinsOptions::print_and_load, py::arg("parser") = nullptr)
+        .def_readwrite("state_options", &VinsOptions::state_options)
+        .def_readwrite("init_options", &VinsOptions::init_options)
+        .def_readwrite("imu_noises", &VinsOptions::imu_noises)
+        .def_readwrite("msckf_options", &VinsOptions::msckf_options)
+        .def_readwrite("slam_options", &VinsOptions::slam_options)
+        .def_readwrite("featinit_options", &VinsOptions::featinit_options)
+        .def_readwrite("try_zupt", &VinsOptions::try_zupt)
+        .def_readwrite("zupt_max_velocity", &VinsOptions::zupt_max_velocity)
+        .def_readwrite("num_pts", &VinsOptions::num_pts)
+        .def_readwrite("use_mask", &VinsOptions::use_mask)
+        .def_readwrite("num_opencv_threads", &VinsOptions::num_opencv_threads)
+        .def_readwrite("cv_backend", &VinsOptions::cv_backend);
 
     py::class_<NoiseManager>(m, "NoiseManager")
         .def(py::init<>())
@@ -126,7 +129,7 @@ PYBIND11_MODULE(ov_srvins_py, m) {
 
     // Bind SqrtEstimator
     py::class_<SqrtEstimator, std::shared_ptr<SqrtEstimator>>(m, "SqrtEstimator")
-        .def(py::init<VioManagerOptions&>())
+        .def(py::init<const VinsOptions&>())
         .def("feed_imu", &SqrtEstimator::feed_imu)
         .def("feed_measurement_imu", &SqrtEstimator::feed_measurement_imu)
         .def("feed_imu_batch",
@@ -150,13 +153,12 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                }
                self.feed_imu_batch(msgs);
              }, py::arg("timestamps"), py::arg("wm"), py::arg("am"))
-        .def("try_zupt", &SqrtEstimator::try_zupt, py::arg("timestamp"),
-             py::arg("has_moved_since_zupt") = false)
+        .def("try_zupt", &SqrtEstimator::try_zupt, py::arg("timestamp"))
         .def("notify_moved", &SqrtEstimator::notify_moved)
         .def("has_moved_since_zupt", &SqrtEstimator::has_moved_since_zupt)
         .def("propagate", &SqrtEstimator::propagate)
         .def("update", &SqrtEstimator::update)
-        .def("propagate_and_update",
+        .def("process_frame",
              [](SqrtEstimator &self, Frontend &frontend, double timestamp,
                 const std::vector<int> &sensor_ids) {
                // Canonical per-frame filter step (core/Pipeline.h): propagate,
@@ -166,17 +168,26 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                ov_core::CameraData message;
                message.timestamp = timestamp;
                message.sensor_ids = sensor_ids;
-               return process_frame(self, frontend, message);
+               return ov_srvins::process_frame(self, frontend, message);
              }, py::arg("frontend"), py::arg("timestamp"), py::arg("sensor_ids"))
         .def("set_zupt_database", &SqrtEstimator::set_zupt_database)
         .def("get_state", &SqrtEstimator::get_state)
         .def("get_propagator", &SqrtEstimator::get_propagator);
 
-    // Canonical pipeline glue (replaces the removed VioManager)
-    m.def("process_frame", &process_frame,
-          py::arg("estimator"), py::arg("frontend"), py::arg("message"));
-    m.def("finalize_initialization", &finalize_initialization,
-          py::arg("estimator"), py::arg("frontend"), py::arg("params"));
+    // IMU batch feeding policy shared by the C++ and Python drivers
+    // (core/Pipeline.h): end index of the IMU batch for a camera frame.
+    m.def("imu_batch_end",
+          [](py::array_t<double, py::array::c_style | py::array::forcecast> imu_times,
+             size_t start, double cam_time_imu) {
+            auto ts = imu_times.unchecked<1>();
+            size_t n = (size_t)ts.shape(0);
+            size_t k = start;
+            while (k < n && ts(k) <= cam_time_imu)
+              k++;
+            if (k < n)
+              k++;
+            return k;
+          }, py::arg("imu_times"), py::arg("start"), py::arg("cam_time_imu"));
 
     // Bind Propagator
     py::class_<Propagator, std::shared_ptr<Propagator>>(m, "Propagator")
@@ -187,24 +198,41 @@ PYBIND11_MODULE(ov_srvins_py, m) {
 
     // Bind Frontend
     py::class_<Frontend, std::shared_ptr<Frontend>>(m, "Frontend")
-        .def(py::init<VioManagerOptions&, std::shared_ptr<State>>())
+        .def(py::init<const VinsOptions&, std::shared_ptr<State>>())
         .def("feed_camera", &Frontend::feed_camera)
         .def("get_historical_viz_image", &Frontend::get_historical_viz_image)
         .def("get_trackFEATS", &Frontend::get_trackFEATS)
-        .def("process_measurements_rules", [](Frontend &self, double timestamp, const std::vector<int> &sensor_ids) {
+        .def("process_measurements_rules", [](Frontend &self, std::shared_ptr<State> state, double timestamp, const std::vector<int> &sensor_ids) {
             std::vector<std::shared_ptr<ov_core::Feature>> featsup_MSCKF;
             std::vector<std::shared_ptr<ov_core::Feature>> feats_slam;
-            self.process_measurements_rules(timestamp, sensor_ids, featsup_MSCKF, feats_slam);
+            self.process_measurements_rules(state, timestamp, sensor_ids, featsup_MSCKF, feats_slam);
             return std::make_tuple(featsup_MSCKF, feats_slam);
         })
         .def("set_startup_time", &Frontend::set_startup_time);
 
+    // Fully wired pipeline bundle (canonical construction sequence)
+    py::class_<System>(m, "System")
+        .def_readonly("estimator", &System::estimator)
+        .def_readonly("frontend", &System::frontend)
+        .def_readonly("initializer", &System::initializer)
+        .def_readonly("init_runner", &System::init_runner)
+        .def_static("create", &System::create, py::arg("params"));
+
     // Bind InertialInitializer
     py::class_<InertialInitializer, std::shared_ptr<InertialInitializer>>(m, "InertialInitializer")
-        .def(py::init<const InertialInitializerOptions &, std::shared_ptr<ov_core::FeatureDatabase>, 
-                      std::shared_ptr<ov_srvins::Propagator>, const UpdaterOptions &, const UpdaterOptions &, 
+        .def(py::init<const InertialInitializerOptions &, std::shared_ptr<ov_core::FeatureDatabase>,
+                      std::shared_ptr<ov_srvins::Propagator>, const UpdaterOptions &, const UpdaterOptions &,
                       const ov_core::FeatureInitializerOptions &>())
         .def("initialize", &InertialInitializer::initialize);
+
+    // Bind InitRunner (drives init per frame; sync by default, async shadow
+    // solve when init_async is enabled)
+    py::class_<InitRunner, std::shared_ptr<InitRunner>>(m, "InitRunner")
+        .def(py::init<const VinsOptions &, std::shared_ptr<SqrtEstimator>,
+                      std::shared_ptr<Frontend>,
+                      std::shared_ptr<InertialInitializer>>())
+        .def("try_initialize", &InitRunner::try_initialize,
+             py::arg("cam_time"), py::arg("wait_for_jerk"));
 
     // Bind the original OpenVINS (full-covariance) system
     bind_full_system(m);

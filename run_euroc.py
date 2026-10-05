@@ -16,7 +16,7 @@ import ov_srvins_py as vins
 
 def run_vio(dataset_path, config_path, max_frames=None):
     # 1. Setup options
-    options = vins.VioManagerOptions()
+    options = vins.VinsOptions()
     parser = vins.YamlParser(config_path)
     options.print_and_load(parser)
 
@@ -24,21 +24,12 @@ def run_vio(dataset_path, config_path, max_frames=None):
     cv2.setNumThreads(options.num_opencv_threads)
     cv2.setRNGSeed(0)
 
-    # 2. Initialize Estimator and Frontend
-    estimator = vins.SqrtEstimator(options)
-    frontend = vins.Frontend(options, estimator.get_state())
-    # Wire the tracker database into the ZUPT updater (disparity check)
-    estimator.set_zupt_database(frontend.get_trackFEATS().get_feature_database())
-
-    # 3. Setup Initializer
-    initializer = vins.InertialInitializer(
-        options.init_options,
-        frontend.get_trackFEATS().get_feature_database(),
-        estimator.get_propagator(),
-        options.msckf_options,
-        options.slam_options,
-        options.featinit_options
-    )
+    # 2. Construct the fully wired pipeline (estimator, frontend, initializer,
+    # init runner; sync init by default, async shadow solve when init_async
+    # is enabled in the config)
+    system = vins.System.create(options)
+    estimator, frontend = system.estimator, system.frontend
+    init_runner = system.init_runner
 
     # 4. Load Data
     imu_df = pd.read_csv(os.path.join(dataset_path, 'mav0/imu0/data.csv'))
@@ -93,17 +84,12 @@ def run_vio(dataset_path, config_path, max_frames=None):
         curr_cam_time = cam0_times[i]
 
         # Feed IMU measurements up to this camera time in one batched call.
-        # Include one sample past the camera time: the propagator needs an IMU
-        # reading after the camera time to close the final integration interval
-        # (select_imu_readings), which the original ROS pipeline guaranteed by
-        # gating cameras on the IMU clock. Use the CURRENT estimated camera-IMU
-        # time offset like the C++ runner does (it drifts when online
-        # timeoffset calibration is enabled).
+        # Feeding policy is shared with the C++ runner (vins.imu_batch_end).
+        # Use the CURRENT estimated camera-IMU time offset like the C++ runner
+        # does (it drifts when online timeoffset calibration is enabled).
         t0 = time.perf_counter()
         t_off = estimator.get_state().cam_imu_timeoffset()
-        k = np.searchsorted(imu_times, curr_cam_time + t_off, side='right')
-        if k < len(imu_times):
-            k += 1
+        k = vins.imu_batch_end(imu_times, imu_idx, curr_cam_time + t_off)
         if k > imu_idx:
             estimator.feed_imu_batch(imu_times[imu_idx:k], imu_wm[imu_idx:k], imu_am[imu_idx:k])
             imu_idx = k
@@ -137,13 +123,10 @@ def run_vio(dataset_path, config_path, max_frames=None):
 
             state = estimator.get_state()
 
-            # Check for initialization
+            # Check for initialization (post-init bookkeeping included)
             if not state.is_initialized:
-                if initializer.initialize(state, not options.try_zupt):
+                if init_runner.try_initialize(curr_cam_time, not options.try_zupt):
                     print(f"VIO Initialized at {curr_cam_time}!")
-                    # Post-init bookkeeping (startup time, db cleanup, feature
-                    # budget, ZUPT motion flag) - same as the C++ runner
-                    vins.finalize_initialization(estimator, frontend, options)
                     init_frame = i - start_cam
                 continue
 
@@ -159,7 +142,7 @@ def run_vio(dataset_path, config_path, max_frames=None):
             # Propagation, feature selection, update, and database cleanup
             # in a single C++ call (no feature list round-trip)
             t0 = time.perf_counter()
-            did_update = estimator.propagate_and_update(frontend, curr_cam_time, [0, 1])
+            did_update = estimator.process_frame(frontend, curr_cam_time, [0, 1])
             t_fused += time.perf_counter() - t0
             if did_update:
                 n_upd += 1

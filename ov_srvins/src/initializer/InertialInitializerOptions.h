@@ -71,6 +71,13 @@ struct InertialInitializerOptions {
   /// If we should perform dynamic initialization
   bool init_dyn_use = false;
 
+  /// If true, the dynamic-initialization solve runs on a background thread
+  /// over snapshots (shadow state, IMU and feature copies) while the main
+  /// thread keeps tracking and buffering IMU; the result is committed at a
+  /// camera frame boundary. Static initialization always stays synchronous
+  /// (it is cheap). Offline deterministic runs should keep this false.
+  bool init_async = false;
+
   /// Max number of MLE iterations for dynamic initialization
   int init_dyn_mle_max_iter = 20;
 

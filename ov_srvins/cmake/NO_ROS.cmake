@@ -63,7 +63,9 @@ list(APPEND LIBRARY_SOURCES
         src/core/SqrtEstimator.cpp
         src/core/Frontend.cpp
         src/core/Pipeline.cpp
-        src/core/VioManagerOptions.cpp
+        src/core/InitRunner.cpp
+        src/core/System.cpp
+        src/core/VinsOptions.cpp
         src/update/UpdaterHelper.cpp
         src/update/UpdaterMSCKF.cpp
         src/update/UpdaterSLAM.cpp

@@ -27,8 +27,8 @@
 
 
 
-#ifndef OV_SRVINS_VIOMANAGEROPTIONS_H
-#define OV_SRVINS_VIOMANAGEROPTIONS_H
+#ifndef OV_SRVINS_VINSOPTIONS_H
+#define OV_SRVINS_VINSOPTIONS_H
 
 #include <Eigen/Eigen>
 #include <iostream>
@@ -65,7 +65,7 @@ namespace ov_srvins {
  * to the parsers. You will also need to add it to the print statement at the
  * bottom of each.
  */
-struct VioManagerOptions {
+struct VinsOptions {
   /**
    * @brief This function will load the non-simulation parameters of the system
    * and print.
@@ -263,4 +263,4 @@ struct VioManagerOptions {
 
 } // namespace ov_srvins
 
-#endif // OV_SRVINS_VIOMANAGEROPTIONS_H
+#endif // OV_SRVINS_VINSOPTIONS_H

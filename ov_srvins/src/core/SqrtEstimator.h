@@ -28,7 +28,7 @@
 
 #include <memory>
 #include <vector>
-#include "VioManagerOptions.h"
+#include "VinsOptions.h"
 #include "utils/sensor_data.h"
 
 namespace ov_core {
@@ -53,7 +53,7 @@ public:
    * @brief Constructor
    * @param params_ System parameters
    */
-  SqrtEstimator(VioManagerOptions &params_);
+  SqrtEstimator(const VinsOptions &params_);
 
   /**
    * @brief Feed IMU data to the estimator (propagator and ZUPT)
@@ -70,23 +70,30 @@ public:
   void feed_measurement_imu(const ov_core::ImuData &message);
 
   /**
-   * @brief Feed a batch of IMU measurements in timestamp order, computing the
-   * buffer trim time once for the whole batch
+   * @brief Feed a batch of IMU measurements in timestamp order
+   *
+   * Equivalent to calling feed_measurement_imu() on each message (the
+   * pre-init rolling-window trim must be computed per message), but crosses
+   * the language/API boundary once for the whole batch.
    * @param messages IMU data sorted by timestamp
    */
   void feed_imu_batch(const std::vector<ov_core::ImuData> &messages);
 
   /**
    * @brief Try to perform a zero-velocity update
+   *
+   * Motion bookkeeping is internal: when zupt_only_at_beginning is enabled,
+   * ZUPT is refused once motion has been observed (see notify_moved()).
+   * Callers that drive propagate()/update() manually (instead of
+   * process_frame()) must call notify_moved() after each visual update.
    * @param timestamp Target timestamp
-   * @param has_moved_since_zupt Extra "has moved" flag, OR-ed with the internal
-   * bookkeeping flag (kept for callers that track motion themselves)
    * @return True if a ZUPT update was performed
    */
-  bool try_zupt(double timestamp, bool has_moved_since_zupt = false);
+  bool try_zupt(double timestamp);
 
   /// Notify the estimator that motion has occurred since the last ZUPT
-  /// (called by the pipeline after initialization and after each visual update)
+  /// (called by the pipeline after initialization and after each visual
+  /// update, and by manual pipeline drivers after their own updates)
   void notify_moved() { has_moved_since_zupt_ = true; }
 
   /// Whether motion has been observed since startup
@@ -125,11 +132,44 @@ public:
   std::shared_ptr<UpdaterZeroVelocity> get_updater_zupt() { return updaterZUPT; }
 
 private:
+  /// Async initialization commit machinery (InitRunner only)
+  friend class InitRunner;
+
+  /**
+   * @brief Swap in a different state object (used to commit an asynchronously
+   * initialized shadow state). Callers holding a state pointer must re-fetch
+   * via get_state(); main thread only.
+   */
+  void swap_state(std::shared_ptr<State> new_state) { state = new_state; }
+
+  /**
+   * @brief Pin the pre-init IMU trim floor: while pinned, the propagator's
+   * buffer retains IMU data back to oldest_time even if the rolling pre-init
+   * window would discard it. Used while an async initialization solve is in
+   * flight so the post-commit catch-up propagation never starves.
+   */
+  void pin_imu_trim(double oldest_time) { trim_floor_pin_ = oldest_time; }
+
+  /// Release a previously pinned trim floor
+  void unpin_imu_trim() { trim_floor_pin_ = -1; }
+
   /// Perform marginalization of old states and features
   void handle_marginalization();
 
+  /**
+   * @brief Compute the buffer trim time (oldest IMU to keep) for a feeding
+   * message at the given timestamp.
+   *
+   * Pre-init: keep only a rolling init_window_time + 0.1 s window (the static
+   * initializer averages IMU over [buffer_oldest, last_static_timestamp], so
+   * an untrimmed buffer would pull pre-static motion into the bias solution),
+   * clamped by the pinned trim floor while an async init solve is in flight.
+   * Post-init: keep everything back to the oldest clone (margtimestep).
+   */
+  double compute_oldest_imu_time(double timestamp) const;
+
   /// Manager parameters
-  VioManagerOptions params;
+  VinsOptions params;
 
   /// Our master state object
   std::shared_ptr<State> state;
@@ -143,6 +183,9 @@ private:
   /// ZUPT bookkeeping: set once motion is observed (init with velocity, or a
   /// visual update); used when zupt_only_at_beginning is enabled
   bool has_moved_since_zupt_ = false;
+
+  /// Pinned pre-init IMU trim floor (-1 when not pinned); see pin_imu_trim
+  double trim_floor_pin_ = -1;
 };
 
 } // namespace ov_srvins

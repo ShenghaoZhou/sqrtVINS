@@ -27,7 +27,7 @@
 
 
 
-#include "VioManagerOptions.h"
+#include "VinsOptions.h"
 
 #include <Eigen/Eigen>
 #include <iostream>
@@ -57,7 +57,7 @@
 
 namespace ov_srvins {
 
-void VioManagerOptions::print_and_load(
+void VinsOptions::print_and_load(
     std::shared_ptr<ov_core::YamlParser> parser) {
   print_and_load_estimator(parser);
   print_and_load_noise(parser);
@@ -65,7 +65,7 @@ void VioManagerOptions::print_and_load(
   print_and_load_trackers(parser);
 }
 
-void VioManagerOptions::print_and_load_estimator(
+void VinsOptions::print_and_load_estimator(
     std::shared_ptr<ov_core::YamlParser> parser) {
   PRINT_DEBUG("ESTIMATOR PARAMETERS:\n");
   state_options.print(parser);
@@ -92,7 +92,7 @@ void VioManagerOptions::print_and_load_estimator(
               record_timing_filepath.c_str());
 }
 
-void VioManagerOptions::print_and_load_noise(
+void VinsOptions::print_and_load_noise(
     std::shared_ptr<ov_core::YamlParser> parser) {
   PRINT_DEBUG("NOISE PARAMETERS:\n");
   if (parser != nullptr) {
@@ -138,7 +138,7 @@ void VioManagerOptions::print_and_load_noise(
   zupt_options.print();
 }
 
-void VioManagerOptions::print_and_load_state(
+void VinsOptions::print_and_load_state(
     std::shared_ptr<ov_core::YamlParser> parser) {
   if (parser != nullptr) {
     parser->parse_config("gravity_mag", gravity_mag);
@@ -277,7 +277,7 @@ void VioManagerOptions::print_and_load_state(
   }
 }
 
-void VioManagerOptions::print_and_load_trackers(
+void VinsOptions::print_and_load_trackers(
     std::shared_ptr<ov_core::YamlParser> parser) {
   if (parser != nullptr) {
     parser->parse_config("use_stereo", use_stereo);

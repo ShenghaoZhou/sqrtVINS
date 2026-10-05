@@ -35,7 +35,7 @@ namespace ov_srvins {
 class SqrtEstimator;
 class Frontend;
 class State;
-class VioManagerOptions;
+class VinsOptions;
 
 /**
  * @brief Canonical per-camera-frame filter step (replaces VioManager).
@@ -71,7 +71,37 @@ bool process_frame(SqrtEstimator &estimator, Frontend &frontend,
  * @param params    System parameters
  */
 void finalize_initialization(SqrtEstimator &estimator, Frontend &frontend,
-                             const VioManagerOptions &params);
+                             const VinsOptions &params);
+
+/**
+ * @brief End index (exclusive) of the IMU batch to feed for a camera frame.
+ *
+ * Mirrors the original ROS gating (a camera is processed only once the IMU
+ * clock has passed cam_time + dt): the buffer must end at the FIRST sample
+ * strictly past cam_time_imu, because the propagator needs a reading after
+ * the camera time to close the final integration interval and the
+ * initializer's window depends on it. Shared by the C++ and Python drivers
+ * so the feeding policy cannot diverge.
+ *
+ * @param messages Sorted IMU container (indexable, .size())
+ * @param start    Index of the first not-yet-fed message
+ * @param cam_time_imu Camera timestamp in the IMU clock (cam + dt)
+ * @param time_of  Accessor returning a message's timestamp
+ */
+template <typename Container, typename TimeOf>
+inline size_t imu_batch_end(const Container &messages, size_t start,
+                            double cam_time_imu, TimeOf time_of) {
+  size_t k = start;
+  while (k < messages.size() && time_of(messages[k]) <= cam_time_imu)
+    k++;
+  if (k < messages.size())
+    k++;
+  return k;
+}
+
+/// Whether a SLAM landmark id belongs to an aruco tag (aruco landmarks
+/// occupy the low id range by convention)
+bool is_aruco_landmark(const std::shared_ptr<State> &state, size_t featid);
 
 /// Global positions of active SLAM landmarks (excluding aruco tags)
 std::vector<Vec3> get_features_SLAM(const std::shared_ptr<State> &state);

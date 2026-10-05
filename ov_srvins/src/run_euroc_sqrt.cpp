@@ -43,10 +43,13 @@
 
 #include "euroc_common.h"
 #include "core/Frontend.h"
+#include "core/InitRunner.h"
 #include "core/Pipeline.h"
 #include "core/SqrtEstimator.h"
-#include "core/VioManagerOptions.h"
-#include "initializer/InertialInitializer.h"
+#include "core/System.h"
+#include "core/VinsOptions.h"
+#include "state/State.h"
+#include "types/IMU.h"
 #include "utils/print.h"
 #include "utils/yaml_parse.h"
 
@@ -59,23 +62,17 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   // Setup options and system (mirrors the Python orchestration)
   //===================================================================================
   auto parser = std::make_shared<YamlParser>(opt.config_path);
-  VioManagerOptions params;
+  VinsOptions params;
   params.print_and_load(parser);
   params.cv_backend = opt.cv_backend;
   // Repeatability settings used by the original ros1_serial_msckf
   cv::setNumThreads(params.num_opencv_threads);
   cv::setRNGSeed(0);
 
-  auto estimator = std::make_shared<SqrtEstimator>(params);
-  auto frontend = std::make_shared<Frontend>(params, estimator->get_state());
-  // Wire the tracker database into the ZUPT updater (disparity check)
-  estimator->set_zupt_database(
-      frontend->get_trackFEATS()->get_feature_database());
-  auto initializer = std::make_shared<InertialInitializer>(
-      params.init_options,
-      frontend->get_trackFEATS()->get_feature_database(),
-      estimator->get_propagator(), params.msckf_options, params.slam_options,
-      params.featinit_options);
+  auto sys = System::create(params);
+  auto estimator = sys.estimator;
+  auto frontend = sys.frontend;
+  auto init_runner = sys.init_runner;
 
   frontend->set_startup_time(cam_data.front().timestamp);
 
@@ -98,17 +95,11 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   for (const auto &cam : cam_data) {
     double curr_cam_time = cam.timestamp;
 
-    // Feed IMU measurements up to this camera time in one batched call.
-    // Mirror the original ROS pipeline exactly: a camera is only processed
-    // once the IMU clock has passed cam_time + dt, so the buffer must end at
-    // the FIRST sample strictly past cam_time + dt (the initializer's window
-    // and the propagator's final integration interval both depend on it).
+    // Feed IMU measurements up to this camera time in one batched call
+    // (core/Pipeline.h: feeding policy shared with the Python driver)
     double t_off = estimator->get_state()->calib_dt_CAMtoIMU->value()(0);
-    size_t k = imu_idx;
-    while (k < imu_data.size() && imu_data.at(k).timestamp <= curr_cam_time + t_off)
-      k++;
-    if (k < imu_data.size() && imu_data.at(k).timestamp > curr_cam_time + t_off)
-      k++;
+    size_t k = imu_batch_end(imu_data, imu_idx, curr_cam_time + t_off,
+                             [](const ImuReading &r) { return r.timestamp; });
     if (k > imu_idx) {
       std::vector<ImuData> msgs(k - imu_idx);
       for (size_t i = imu_idx; i < k; i++) {
@@ -145,13 +136,12 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
 
     auto state = estimator->get_state();
 
-    // Check for initialization (synchronous)
+    // Check for initialization (synchronous, or async shadow solve when
+    // init_async is enabled; without ZUPT we must wait for a jerk before
+    // the static initializer will use the stationary window)
     if (!state->is_initialized) {
-      // Without ZUPT we must wait for a jerk before the static initializer
-      // will use the stationary window
-      if (initializer->initialize(state, !params.try_zupt)) {
+      if (init_runner->try_initialize(curr_cam_time, !params.try_zupt)) {
         PRINT_INFO("VIO Initialized at %.4f!\n", curr_cam_time);
-        finalize_initialization(*estimator, *frontend, params);
       }
       processed++;
       continue;

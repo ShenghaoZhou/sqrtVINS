@@ -60,6 +60,32 @@ InertialInitializer::InertialInitializer(
 bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,
                                      bool wait_for_jerk) {
 
+  InitMethod method;
+  if (!choose_method(wait_for_jerk, method)) {
+    return false;
+  }
+
+  bool init_success = false;
+  if (method == InitMethod::STATIC) {
+    PRINT_DEBUG(GREEN "[init]: USING STATIC INITIALIZER METHOD!\n" RESET);
+    init_success = run_static(state);
+  } else if (method == InitMethod::DYNAMIC) {
+    PRINT_DEBUG(GREEN "[init]: USING DYNAMIC INITIALIZER METHOD!\n" RESET);
+    init_success = run_dynamic(state);
+  }
+
+  finish_attempt();
+
+  if (init_success) {
+    state->is_initialized = true;
+  }
+  return init_success;
+}
+
+bool InertialInitializer::choose_method(bool wait_for_jerk,
+                                        InitMethod &method) {
+  method = InitMethod::NONE;
+
   // Get the newest and oldest timestamps we will try to initialize between!
   double lastest_cam_time = -1;
   double oldest_cam_time = std::numeric_limits<double>::max();
@@ -124,7 +150,6 @@ bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,
 
   bool is_still = !disparity_detected_moving;
   bool has_jerk = is_static_prev_ && !is_still;
-  bool init_success = false;
   std::string msg = (has_jerk) ? "jerk detected, " : "no jerk detected, ";
   msg += (is_still) ? "platform is stationary" : "platform is moving";
   PRINT_INFO(YELLOW "[init]: the current system setup (zvupt: %s, dyna init: "
@@ -133,24 +158,25 @@ bool InertialInitializer::initialize(std::shared_ptr<ov_srvins::State> &state,
              params_.init_dyn_use ? "true" : "false", msg.c_str());
   if ((is_still && !wait_for_jerk) /*Case 1*/ ||
       (!is_still && has_jerk && wait_for_jerk) /*Case 3*/) {
-    PRINT_DEBUG(GREEN "[init]: USING STATIC INITIALIZER METHOD!\n" RESET);
-    init_success = init_static_->initialize(state, prev_static_timestamp_);
+    method = InitMethod::STATIC;
   } else if (params_.init_dyn_use &&
              ((!is_still && !wait_for_jerk) /*Case 2*/ ||
               (!is_still && !has_jerk && wait_for_jerk) /*Case 4*/)) {
-    PRINT_DEBUG(GREEN "[init]: USING DYNAMIC INITIALIZER METHOD!\n" RESET);
-    init_success = init_dynamic_->initialize(state);
+    method = InitMethod::DYNAMIC;
   }
 
+  // Cache for finish_attempt() and the async runner
+  last_is_still_ = is_still;
+  last_latest_cam_time_ = lastest_cam_time;
+  last_oldest_win_time_ = oldest_win_time;
+  return true;
+}
+
+void InertialInitializer::finish_attempt() {
   // Update static timestamp and is_still flag
-  if (is_still)
-    prev_static_timestamp_ = lastest_cam_time;
+  if (last_is_still_)
+    prev_static_timestamp_ = last_latest_cam_time_;
   else
     prev_static_timestamp_ = -1;
-  is_static_prev_ = is_still;
-
-  if (init_success) {
-    state->is_initialized = true;
-  }
-  return init_success;
+  is_static_prev_ = last_is_still_;
 }

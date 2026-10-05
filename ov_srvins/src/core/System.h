@@ -51,6 +51,11 @@ struct System {
 
   /// Construct and wire all components from the system parameters
   static System create(const VinsOptions &params);
+
+private:
+  /// Only create() can build a System: the components are useless (null)
+  /// unwired, so a default-constructed System would be a bug
+  System() = default;
 };
 
 } // namespace ov_srvins

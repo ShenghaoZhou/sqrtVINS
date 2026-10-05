@@ -101,7 +101,7 @@ inline size_t imu_batch_end(const Container &messages, size_t start,
 
 /// Whether a SLAM landmark id belongs to an aruco tag (aruco landmarks
 /// occupy the low id range by convention)
-bool is_aruco_landmark(const std::shared_ptr<State> &state, size_t featid);
+bool is_aruco_landmark(const State &state, size_t featid);
 
 /// Global positions of active SLAM landmarks (excluding aruco tags)
 std::vector<Vec3> get_features_SLAM(const std::shared_ptr<State> &state);

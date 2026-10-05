@@ -192,7 +192,8 @@ PYBIND11_MODULE(ov_srvins_py, m) {
     // Bind Propagator
     py::class_<Propagator, std::shared_ptr<Propagator>>(m, "Propagator")
         .def(py::init<NoiseManager, DataType>())
-        .def("feed_imu", &Propagator::feed_imu)
+        .def("feed_imu", &Propagator::feed_imu, py::arg("message"),
+             py::arg("oldest_time") = -1)
         .def("clean_old_imu_measurements", &Propagator::clean_old_imu_measurements)
         .def("propagate", &Propagator::propagate);
 

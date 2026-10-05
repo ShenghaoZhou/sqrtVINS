@@ -167,7 +167,7 @@ void Frontend::process_measurements_rules(
 
   int curr_aruco_tags = 0;
   for (auto &f : state->features_SLAM)
-    if (is_aruco_landmark(state, f.second->featid))
+    if (is_aruco_landmark(*state, f.second->featid))
       curr_aruco_tags++;
 
   if (state->options.max_slam_features > 0 &&

@@ -49,9 +49,11 @@ class State;
  * from a locked IMU copy, deep-copied feature database) while the main
  * thread keeps tracking features and buffering IMU. When the solve
  * finishes, the shadow state is committed at a camera frame boundary: the
- * estimator and frontend are repointed, the camera times recorded while
- * the solve was in flight are replayed through propagate() to rebuild the
- * clone window, and finalize_initialization() runs.
+ * estimator's state is swapped for the shadow one (nothing else needs
+ * repointing - the frontend holds no state pointer; selection rules take
+ * the current state per call), the camera times recorded while the solve
+ * was in flight are replayed through propagate() to rebuild the clone
+ * window, and finalize_initialization() runs.
  *
  * Threading contract: the main thread owns the live State / Propagator /
  * Frontend exclusively; the background thread only touches its private
@@ -73,7 +75,9 @@ public:
 
   /**
    * @brief Attempt (or continue) initialization for this camera frame
-   * @param cam_time Current camera timestamp
+   * @param cam_time Current camera timestamp (only used on the async path,
+   * to record frames for the post-commit clone replay; the synchronous
+   * path works from the propagator/tracker buffers and ignores it)
    * @param wait_for_jerk If true, wait for a "jerk" before static init
    * @return True on the frame where initialization has completed (and, in
    * the async case, been committed)

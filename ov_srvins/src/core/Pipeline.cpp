@@ -134,9 +134,8 @@ void ov_srvins::finalize_initialization(SqrtEstimator &estimator,
   }
 }
 
-bool ov_srvins::is_aruco_landmark(const std::shared_ptr<State> &state,
-                                  size_t featid) {
-  return (int)featid <= 4 * state->options.max_aruco_features;
+bool ov_srvins::is_aruco_landmark(const State &state, size_t featid) {
+  return (int)featid <= 4 * state.options.max_aruco_features;
 }
 
 /// Global positions of the SLAM landmarks selected by `want_aruco`
@@ -144,7 +143,7 @@ static std::vector<Vec3> collect_landmarks(const std::shared_ptr<State> &state,
                                            bool want_aruco) {
   std::vector<Vec3> feats;
   for (auto &f : state->features_SLAM) {
-    if (ov_srvins::is_aruco_landmark(state, f.first) != want_aruco)
+    if (ov_srvins::is_aruco_landmark(*state, f.first) != want_aruco)
       continue;
     if (ov_type::LandmarkRepresentation::is_relative_representation(
             f.second->feat_representation)) {

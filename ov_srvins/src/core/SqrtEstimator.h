@@ -108,7 +108,6 @@ public:
 
   /**
    * @brief Perform the full state update with visual features
-   * @param message Camera data
    * @param featsup_MSCKF MSCKF features
    * @param feats_slam SLAM features (separated into update and delayed-init
    * sets internally, after marginalize_slam - matching VioManager ordering)

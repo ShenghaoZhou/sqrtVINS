@@ -172,6 +172,7 @@ backend_keyframe_stride: 5
 backend_min_track_length: 3
 backend_max_reproj_error: 5.0
 backend_refine_after_pruning: true
+backend_use_imu_factors: true
 backend_max_num_iterations: 100
 backend_num_threads: 8
 backend_loss_scale: 1.0

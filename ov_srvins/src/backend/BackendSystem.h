@@ -24,6 +24,7 @@
 #ifndef OV_SRVINS_BACKENDSYSTEM_H
 #define OV_SRVINS_BACKENDSYSTEM_H
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -32,9 +33,12 @@
 
 #include "backend/BackendOptions.h"
 #include "utils/DataType.h"
+#include "utils/NoiseManager.h"
+#include "utils/sensor_data.h"
 
 namespace colmap {
 class Reconstruction;
+class CeresBundleAdjuster;
 }
 
 namespace ov_core {
@@ -44,6 +48,7 @@ class FeatureDatabase;
 namespace ov_srvins {
 
 class State;
+struct ImuFactorData;
 
 /// Outcome of an offline BA run (costs in px for interpretability)
 struct BackendSummary {
@@ -61,17 +66,32 @@ struct BackendSummary {
   int num_pruned_points = 0;
 };
 
+/// IMU constraints for the BA solve (Phase 2): per-keyframe velocity/bias
+/// blocks plus the preintegrated factors between consecutive keyframes.
+/// The `sb` storage backs the Ceres parameter blocks and must stay alive
+/// (and un-reallocated) across Solve().
+struct ImuConstraints {
+  Eigen::Vector3d gravity = Eigen::Vector3d(0, 0, 9.81);
+  /// per-keyframe [v_IinG(3) bg(3) ba(3)] blocks (initial values from the
+  /// filter; updated in place by the solver)
+  std::vector<std::array<double, 9>> sb;
+  /// factor between keyframe k and k+1 (size = num keyframes - 1)
+  std::vector<ImuFactorData> factors;
+};
+
 /**
- * @brief Bundle-adjustment backend (Phase 1: offline, vision-only).
+ * @brief Bundle-adjustment backend (offline: vision + IMU).
  *
- * Records keyframe poses and feature observations during the filter run
- * (record_observations BEFORE the visual update, record_pose AFTER it),
- * then assembles a colmap::Reconstruction — one rig whose reference sensor
- * is the IMU, one frame per keyframe, one image per camera, one Point3D per
- * surviving feature track — and refines it with colmap's Ceres bundle
- * adjuster. Camera intrinsics and cam-IMU extrinsics are held constant; the
- * oldest keyframe pose is held constant to anchor the gauge to the filter
- * frame so trajectories stay comparable.
+ * Records keyframe poses/velocities/biases and feature observations during
+ * the filter run (record_observations BEFORE the visual update, record_pose
+ * AFTER it), then assembles a colmap::Reconstruction — one rig whose
+ * reference sensor is the IMU, one frame per keyframe, one image per camera,
+ * one Point3D per surviving feature track — and refines it with colmap's
+ * Ceres bundle adjuster. Camera intrinsics and cam-IMU extrinsics are held
+ * constant; the oldest keyframe pose is held constant to anchor the gauge to
+ * the filter frame so trajectories stay comparable. When IMU data has been
+ * fed (feed_imu), preintegrated IMU factors between consecutive keyframes
+ * are injected into the same Ceres problem (Phase 2).
  */
 class BackendSystem {
 public:
@@ -82,16 +102,25 @@ public:
     Eigen::Vector2d uv; // distorted pixels (as stored in the feature db)
   };
 
-  /// Recorded keyframe: filter pose + all track observations at that time
+  /// Recorded keyframe: filter pose + velocity/bias snapshot + all track
+  /// observations at that time
   struct Keyframe {
     double timestamp = -1;
     bool has_pose = false;
     Mat3 R_GtoI = Mat3::Identity();
     Vec3 p_IinG = Vec3::Zero();
+    Vec3 v_IinG = Vec3::Zero();
+    Vec3 bg = Vec3::Zero();
+    Vec3 ba = Vec3::Zero();
     std::vector<Observation> obs;
   };
 
-  explicit BackendSystem(const BackendOptions &opts);
+  BackendSystem(const BackendOptions &opts, const NoiseManager &imu_noises,
+                double gravity_mag);
+
+  /// Append IMU readings (sorted by timestamp) for the preintegrated
+  /// factors. Feed the same stream that goes to the estimator.
+  void feed_imu(const std::vector<ov_core::ImuData> &msgs);
 
   /// Snapshot feature observations at `timestamp` (call BEFORE the visual
   /// update, after feed_camera, while tracks consumed by the update are
@@ -113,19 +142,44 @@ public:
   /// Solve + prune (+ re-solve) + export on an already-assembled
   /// reconstruction. Exposed for unit tests with synthetic maps.
   /// frame_timestamps must be ordered by ascending frame id (1..N).
+  /// If `imu` is given, its factors/parameter blocks are injected into the
+  /// Ceres problem before each solve (it must outlive the call).
   BackendSummary solve_and_export(colmap::Reconstruction &recon,
                                   const std::vector<double> &frame_timestamps,
-                                  const std::string &traj_out_path);
+                                  const std::string &traj_out_path,
+                                  ImuConstraints *imu = nullptr);
+
+  /// Build the IMU constraints over a set of keyframes (must be the same
+  /// keyframes/ordering that enter the reconstruction). Returns nullptr if
+  /// IMU factors are disabled or the data is insufficient. Static so unit
+  /// tests can build constraints for synthetic problems.
+  static std::unique_ptr<ImuConstraints> build_imu_constraints(
+      const std::vector<Keyframe> &keyframes,
+      const std::vector<ov_core::ImuData> &imu_data, double t_cam_to_imu,
+      const NoiseManager &imu_noises, double gravity_mag, bool enabled);
 
 private:
   /// Build the colmap reconstruction from the recorded keyframes (poses,
-  /// stereo rig, triangulated tracks). Keyframes without a pose are dropped.
+  /// stereo rig, triangulated tracks). Keyframes without a pose are dropped;
+  /// `used_keyframes` (if given) receives the keyframes that made it in, in
+  /// frame-id order.
   std::unique_ptr<colmap::Reconstruction>
   build_reconstruction(const std::vector<Keyframe> &keyframes, State &state,
-                       std::vector<double> &frame_timestamps);
+                       std::vector<double> &frame_timestamps,
+                       std::vector<Keyframe> *used_keyframes = nullptr);
+
+  /// Add the velocity/bias parameter blocks and preintegrated IMU residual
+  /// blocks to the adjuster's Ceres problem (one factor per consecutive
+  /// keyframe pair).
+  void inject_imu_factors(colmap::CeresBundleAdjuster &adjuster,
+                          colmap::Reconstruction &recon,
+                          ImuConstraints &imu);
 
   BackendOptions opts_;
+  NoiseManager imu_noises_;
+  Eigen::Vector3d gravity_ = Eigen::Vector3d(0, 0, 9.81);
   std::vector<Keyframe> keyframes_;
+  std::vector<ov_core::ImuData> imu_data_;
   int num_triang_rejected_ = 0;
   int record_count_ = 0;
   bool keyframe_pending_pose_ = false;

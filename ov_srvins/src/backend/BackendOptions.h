@@ -32,9 +32,9 @@ namespace ov_srvins {
 /**
  * @brief Options for the colmap/Ceres bundle-adjustment backend.
  *
- * Phase 1 scope: offline (post-run) vision-only BA. The recorder snapshots
- * keyframe poses and feature observations during the filter run; after the
- * run, a colmap::Reconstruction is assembled and refined with Ceres.
+ * Offline (post-run) BA over recorded keyframes: vision-only reprojection
+ * factors (Phase 1) plus preintegrated IMU factors between consecutive
+ * keyframes (Phase 2, enabled by default).
  */
 struct BackendOptions {
 
@@ -60,6 +60,11 @@ struct BackendOptions {
 
   /// Run a second BA solve after outlier pruning
   bool refine_after_pruning = true;
+
+  /// Add preintegrated IMU factors between consecutive keyframes (with
+  /// per-keyframe velocity/bias blocks) to the BA problem. Requires IMU
+  /// data to be fed via BackendSystem::feed_imu during the run.
+  bool use_imu_factors = true;
 
   /// Ceres solver settings
   int max_num_iterations = 100;

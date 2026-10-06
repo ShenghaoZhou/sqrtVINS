@@ -81,6 +81,8 @@ void VinsOptions::print_and_load_backend(
                          backend_options.max_reproj_error_px);
     parser->parse_config("backend_refine_after_pruning",
                          backend_options.refine_after_pruning);
+    parser->parse_config("backend_use_imu_factors",
+                         backend_options.use_imu_factors);
     parser->parse_config("backend_max_num_iterations",
                          backend_options.max_num_iterations);
     parser->parse_config("backend_num_threads", backend_options.num_threads);

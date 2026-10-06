@@ -256,7 +256,7 @@ static int test_synthetic_ba(const std::string &traj_out) {
   opts.loss_scale = 0;             // noise-free observations
   opts.max_reproj_error_px = -1;   // no pruning for the smoke test
   opts.print_summary = true;
-  BackendSystem backend(opts);
+  BackendSystem backend(opts, NoiseManager(), 9.81);
   BackendSummary summary =
       backend.solve_and_export(recon, timestamps, traj_out);
 

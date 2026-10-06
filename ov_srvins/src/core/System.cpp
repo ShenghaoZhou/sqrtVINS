@@ -51,7 +51,8 @@ System System::create(const VinsOptions &params) {
                                                  sys.frontend, sys.initializer);
 #ifdef SQRTVINS_BACKEND
   if (params.backend_options.enabled) {
-    sys.backend = std::make_shared<BackendSystem>(params.backend_options);
+    sys.backend = std::make_shared<BackendSystem>(
+          params.backend_options, params.imu_noises, params.gravity_mag);
   }
 #endif
   return sys;

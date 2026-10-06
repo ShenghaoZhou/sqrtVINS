@@ -120,6 +120,11 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
         SRVINS_PROFILE("drv.feed_imu_batch");
         estimator->feed_imu_batch(msgs);
       }
+#ifdef SQRTVINS_BACKEND
+      if (sys.backend) {
+        sys.backend->feed_imu(msgs);
+      }
+#endif
       imu_idx = k;
     }
 

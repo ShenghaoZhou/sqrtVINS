@@ -93,6 +93,7 @@ list(APPEND LIBRARY_SOURCES
 if(SQRTVINS_ENABLE_BACKEND)
     list(APPEND LIBRARY_SOURCES
         src/backend/ColmapMapAdapter.cpp
+        src/backend/ImuPreintegration.cpp
         src/backend/BackendSystem.cpp
         )
 endif()
@@ -124,6 +125,9 @@ if(SQRTVINS_ENABLE_BACKEND)
     add_executable(test_backend_adapter src/backend/test_backend_adapter.cpp)
     target_link_libraries(test_backend_adapter ov_srvins_lib colmap_lite)
     target_include_directories(test_backend_adapter PRIVATE src/)
+    add_executable(test_backend_imu src/backend/test_backend_imu.cpp)
+    target_link_libraries(test_backend_imu ov_srvins_lib colmap_lite)
+    target_include_directories(test_backend_imu PRIVATE src/)
 endif()
 target_include_directories(ov_srvins_lib PUBLIC src/)
 install(TARGETS ov_srvins_lib

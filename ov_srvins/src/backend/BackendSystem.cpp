@@ -30,10 +30,13 @@
 #include <unordered_map>
 
 #include "backend/ColmapMapAdapter.h"
+#include "backend/ImuFactor.h"
+#include "backend/ImuPreintegration.h"
 #include "cam/CamBase.h"
 #include "feat/Feature.h"
 #include "feat/FeatureDatabase.h"
 #include "state/State.h"
+#include "types/IMU.h"
 #include "types/PoseJPL.h"
 #include "utils/print.h"
 
@@ -48,7 +51,28 @@ namespace ov_srvins {
 /// colmap id of the IMU reference sensor (ids are namespaced per sensor type)
 static constexpr colmap::sensor_t kImuSensorId(colmap::SensorType::IMU, 1);
 
-BackendSystem::BackendSystem(const BackendOptions &opts) : opts_(opts) {}
+/// Mean reprojection error with per-point errors capped: keeps a few
+/// behind-camera/degenerate points (DBL_MAX) from making the diagnostic
+/// meaningless. The pruning threshold below still sees the true errors.
+static double mean_reproj_capped(colmap::Reconstruction &recon,
+                                 double cap_px = 100.0) {
+  recon.UpdatePoint3DErrors();
+  double sum = 0;
+  for (const auto &point_pair : recon.Points3D()) {
+    sum += std::min(point_pair.second.error, cap_px);
+  }
+  return recon.Points3D().empty() ? -1.0
+                                  : sum / recon.Points3D().size();
+}
+
+BackendSystem::BackendSystem(const BackendOptions &opts,
+                             const NoiseManager &imu_noises, double gravity_mag)
+    : opts_(opts), imu_noises_(imu_noises),
+      gravity_(0, 0, gravity_mag) {}
+
+void BackendSystem::feed_imu(const std::vector<ov_core::ImuData> &msgs) {
+  imu_data_.insert(imu_data_.end(), msgs.begin(), msgs.end());
+}
 
 void BackendSystem::record_observations(double timestamp,
                                         ov_core::FeatureDatabase &db) {
@@ -96,14 +120,20 @@ bool BackendSystem::record_pose(const State &state) {
   }
   kf.R_GtoI = clone->Rot();
   kf.p_IinG = clone->pos();
+  // velocity/bias snapshot initializes the IMU-factor blocks (Phase 2)
+  if (state.imu != nullptr) {
+    kf.v_IinG = state.imu->vel();
+    kf.bg = state.imu->bias_g();
+    kf.ba = state.imu->bias_a();
+  }
   kf.has_pose = true;
   return true;
 }
 
-std::unique_ptr<colmap::Reconstruction>
-BackendSystem::build_reconstruction(const std::vector<Keyframe> &keyframes_in,
-                                    State &state,
-                                    std::vector<double> &frame_timestamps) {
+std::unique_ptr<colmap::Reconstruction> BackendSystem::build_reconstruction(
+    const std::vector<Keyframe> &keyframes_in, State &state,
+    std::vector<double> &frame_timestamps,
+    std::vector<Keyframe> *used_keyframes) {
   auto recon = std::make_unique<colmap::Reconstruction>();
 
   // --- cameras + rig (IMU reference sensor, cameras as rig members) ---
@@ -130,6 +160,8 @@ BackendSystem::build_reconstruction(const std::vector<Keyframe> &keyframes_in,
     if (!kf.has_pose || kf.obs.empty())
       continue;
     keyframes.push_back(&kf);
+    if (used_keyframes != nullptr)
+      used_keyframes->push_back(kf);
   }
 
   // --- frames + images (one frame per keyframe, one image per camera) -------
@@ -277,9 +309,89 @@ BackendSystem::build_reconstruction(const std::vector<Keyframe> &keyframes_in,
   return recon;
 }
 
+std::unique_ptr<ImuConstraints> BackendSystem::build_imu_constraints(
+    const std::vector<Keyframe> &keyframes,
+    const std::vector<ov_core::ImuData> &imu_data, double t_cam_to_imu,
+    const NoiseManager &imu_noises, double gravity_mag, bool enabled) {
+  if (!enabled || keyframes.size() < 2 || imu_data.size() < 4)
+    return nullptr;
+
+  auto imu = std::make_unique<ImuConstraints>();
+  imu->gravity = Eigen::Vector3d(0, 0, gravity_mag);
+  imu->sb.resize(keyframes.size());
+  for (size_t k = 0; k < keyframes.size(); k++) {
+    const Keyframe &kf = keyframes[k];
+    imu->sb[k] = {kf.v_IinG(0), kf.v_IinG(1), kf.v_IinG(2),
+                  kf.bg(0),     kf.bg(1),     kf.bg(2),
+                  kf.ba(0),     kf.ba(1),     kf.ba(2)};
+  }
+
+  imu->factors.reserve(keyframes.size() - 1);
+  size_t num_failed = 0;
+  for (size_t k = 0; k + 1 < keyframes.size(); k++) {
+    // preintegrate between the keyframe times (IMU clock), linearized at the
+    // recorded filter biases of keyframe k
+    const Keyframe &kf = keyframes[k];
+    ImuPreintegration pre(imu_noises.sigma_w, imu_noises.sigma_a,
+                          imu_noises.sigma_wb, imu_noises.sigma_ab,
+                          kf.bg.cast<double>(), kf.ba.cast<double>());
+    const double t0 = kf.timestamp + t_cam_to_imu;
+    const double t1 = keyframes[k + 1].timestamp + t_cam_to_imu;
+    if (!pre.integrate(imu_data, t0, t1)) {
+      num_failed++;
+      // keep factor indices aligned with keyframe pairs: push a zero-weight
+      // placeholder instead of skipping the segment
+      ImuFactorData placeholder;
+      placeholder.sqrt_info.setZero();
+      imu->factors.push_back(placeholder);
+      continue;
+    }
+    imu->factors.push_back(
+        ImuFactorData::FromPreintegration(pre, imu->gravity));
+  }
+  if (num_failed > 0) {
+    PRINT_ERROR(YELLOW "[BACKEND]: %zu keyframe segments had insufficient "
+                       "IMU data (factors dropped)\n" RESET,
+                num_failed);
+  }
+  if (num_failed == keyframes.size() - 1)
+    return nullptr;
+  return imu;
+}
+
+void BackendSystem::inject_imu_factors(colmap::CeresBundleAdjuster &adjuster,
+                                       colmap::Reconstruction &recon,
+                                       ImuConstraints &imu) {
+  auto &problem = adjuster.Problem();
+  const size_t num_keyframes = imu.sb.size();
+  for (size_t k = 0; k < num_keyframes; k++) {
+    problem->AddParameterBlock(imu.sb[k].data(), 9);
+  }
+  size_t added = 0;
+  for (size_t k = 0; k + 1 < num_keyframes; k++) {
+    const colmap::frame_t frame_i = k + 1;
+    const colmap::frame_t frame_j = k + 2;
+    if (!recon.ExistsFrame(frame_i) || !recon.ExistsFrame(frame_j))
+      continue;
+    if (k >= imu.factors.size())
+      break;
+    auto *cost =
+        new ceres::AutoDiffCostFunction<ImuFactor, 15, 7, 9, 7, 9>(
+            new ImuFactor(imu.factors[k]));
+    double *pose_i = recon.Frame(frame_i).RigFromWorld().params.data();
+    double *pose_j = recon.Frame(frame_j).RigFromWorld().params.data();
+    problem->AddResidualBlock(cost, nullptr, pose_i, imu.sb[k].data(), pose_j,
+                              imu.sb[k + 1].data());
+    added++;
+  }
+  PRINT_INFO("[BACKEND]: injected %zu IMU factors (%zu keyframe motion "
+             "blocks)\n",
+             added, num_keyframes);
+}
+
 BackendSummary BackendSystem::solve_and_export(
     colmap::Reconstruction &recon, const std::vector<double> &frame_timestamps,
-    const std::string &traj_out_path) {
+    const std::string &traj_out_path, ImuConstraints *imu) {
   BackendSummary summary;
   summary.num_keyframes = static_cast<int>(frame_timestamps.size());
   summary.num_images = static_cast<int>(recon.NumImages());
@@ -291,9 +403,7 @@ BackendSummary BackendSystem::solve_and_export(
     return summary;
   }
 
-  // errors are cached on the points: refresh before reading
-  recon.UpdatePoint3DErrors();
-  summary.mean_reproj_error_before = recon.ComputeMeanReprojectionError();
+  summary.mean_reproj_error_before = mean_reproj_capped(recon);
 
   // --- BA configuration: vision-only refinement of frame poses + points ----
   colmap::BundleAdjustmentConfig config;
@@ -327,6 +437,8 @@ BackendSummary BackendSystem::solve_and_export(
 
   auto adjuster =
       colmap::CreateDefaultCeresBundleAdjuster(ba_options, config, recon);
+  if (imu != nullptr)
+    inject_imu_factors(*adjuster, recon, *imu);
   auto ba_summary = adjuster->Solve();
   summary.solved = ba_summary->IsSolutionUsable();
   if (opts_.print_summary) {
@@ -336,8 +448,7 @@ BackendSummary BackendSystem::solve_and_export(
   if (!summary.solved)
     return summary;
 
-  recon.UpdatePoint3DErrors();
-  summary.mean_reproj_error_after = recon.ComputeMeanReprojectionError();
+  summary.mean_reproj_error_after = mean_reproj_capped(recon);
 
   // --- prune outlier points, then (optionally) re-solve --------------------
   if (opts_.max_reproj_error_px > 0) {
@@ -368,6 +479,8 @@ BackendSummary BackendSystem::solve_and_export(
     if (opts_.refine_after_pruning && !to_delete.empty()) {
       adjuster =
           colmap::CreateDefaultCeresBundleAdjuster(ba_options, config, recon);
+      if (imu != nullptr)
+        inject_imu_factors(*adjuster, recon, *imu);
       ba_summary = adjuster->Solve();
       summary.solved = ba_summary->IsSolutionUsable();
       if (opts_.print_summary) {
@@ -375,8 +488,7 @@ BackendSummary BackendSystem::solve_and_export(
                    ba_summary->BriefReport().c_str());
       }
     }
-    recon.UpdatePoint3DErrors();
-    summary.mean_reproj_error_final = recon.ComputeMeanReprojectionError();
+    summary.mean_reproj_error_final = mean_reproj_capped(recon);
   }
 
   // --- export the refined trajectory in the filter's output format ---------
@@ -404,12 +516,20 @@ BackendSummary BackendSystem::run_offline_ba(State &state,
                                              const std::string &traj_out_path) {
   num_triang_rejected_ = 0;
   std::vector<double> frame_timestamps;
-  auto recon = build_reconstruction(keyframes_, state, frame_timestamps);
+  std::vector<Keyframe> used_keyframes;
+  auto recon = build_reconstruction(keyframes_, state, frame_timestamps,
+                                    &used_keyframes);
   PRINT_INFO("[BACKEND]: built reconstruction: %zu keyframes, %d images, "
              "%zu points (%d triangulations rejected)\n",
              frame_timestamps.size(), static_cast<int>(recon->NumImages()),
              recon->NumPoints3D(), num_triang_rejected_);
-  return solve_and_export(*recon, frame_timestamps, traj_out_path);
+
+  // Phase 2: preintegrated IMU factors between consecutive keyframes
+  const double t_cam_to_imu = state.calib_dt_CAMtoIMU->value()(0);
+  auto imu = build_imu_constraints(used_keyframes, imu_data_, t_cam_to_imu,
+                                   imu_noises_, gravity_(2),
+                                   opts_.use_imu_factors);
+  return solve_and_export(*recon, frame_timestamps, traj_out_path, imu.get());
 }
 
 } // namespace ov_srvins

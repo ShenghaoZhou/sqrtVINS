@@ -86,6 +86,7 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                        &BackendOptions::max_reproj_error_px)
         .def_readwrite("refine_after_pruning",
                        &BackendOptions::refine_after_pruning)
+        .def_readwrite("use_imu_factors", &BackendOptions::use_imu_factors)
         .def_readwrite("max_num_iterations",
                        &BackendOptions::max_num_iterations)
         .def_readwrite("num_threads", &BackendOptions::num_threads)
@@ -265,6 +266,7 @@ PYBIND11_MODULE(ov_srvins_py, m) {
 
     py::class_<BackendSystem, std::shared_ptr<BackendSystem>>(m,
                                                               "BackendSystem")
+        .def("feed_imu", &BackendSystem::feed_imu)
         .def("record_observations", &BackendSystem::record_observations)
         .def("record_pose", &BackendSystem::record_pose)
         .def("num_keyframes", &BackendSystem::num_keyframes)

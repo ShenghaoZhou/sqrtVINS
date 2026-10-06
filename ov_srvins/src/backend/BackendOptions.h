@@ -66,6 +66,26 @@ struct BackendOptions {
   /// data to be fed via BackendSystem::feed_imu during the run.
   bool use_imu_factors = true;
 
+  /// --- online fixed-lag windowed BA (Phase 2b) ----------------------------
+
+  /// Run a background thread that continuously bundle-adjusts a sliding
+  /// window of the most recent keyframes. The refined poses are exposed via
+  /// BackendSystem::get_refined_poses() for filter feedback (Phase 3).
+  bool online_enabled = false;
+
+  /// Number of keyframes in the sliding window
+  int window_size = 15;
+
+  /// Solve every Nth new keyframe
+  int window_solve_stride = 2;
+
+  /// Iteration budget for a windowed solve (small: the window is warm-started
+  /// from the filter poses and the previous solve)
+  int window_max_iterations = 15;
+
+  /// Wall-clock budget per windowed solve [s] (0 = no limit)
+  double window_max_solver_time = 0.05;
+
   /// Ceres solver settings
   int max_num_iterations = 100;
   int num_threads = 4;

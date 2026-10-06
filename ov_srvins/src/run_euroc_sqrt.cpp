@@ -233,6 +233,12 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
         (int)summary.solved, summary.mean_reproj_error_before,
         summary.mean_reproj_error_after, summary.mean_reproj_error_final,
         summary.num_pruned_points, ba_path.c_str());
+    if (sys.backend->online_enabled()) {
+      const std::string online_path = opt.output_path + ".online";
+      sys.backend->export_online_trajectory(online_path);
+      PRINT_INFO("[BACKEND]: online windowed trajectory -> %s\n",
+                 online_path.c_str());
+    }
   }
 #endif
 

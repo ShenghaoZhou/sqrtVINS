@@ -87,6 +87,14 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readwrite("refine_after_pruning",
                        &BackendOptions::refine_after_pruning)
         .def_readwrite("use_imu_factors", &BackendOptions::use_imu_factors)
+        .def_readwrite("online_enabled", &BackendOptions::online_enabled)
+        .def_readwrite("window_size", &BackendOptions::window_size)
+        .def_readwrite("window_solve_stride",
+                       &BackendOptions::window_solve_stride)
+        .def_readwrite("window_max_iterations",
+                       &BackendOptions::window_max_iterations)
+        .def_readwrite("window_max_solver_time",
+                       &BackendOptions::window_max_solver_time)
         .def_readwrite("max_num_iterations",
                        &BackendOptions::max_num_iterations)
         .def_readwrite("num_threads", &BackendOptions::num_threads)
@@ -270,6 +278,10 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def("record_observations", &BackendSystem::record_observations)
         .def("record_pose", &BackendSystem::record_pose)
         .def("num_keyframes", &BackendSystem::num_keyframes)
+        .def("online_enabled", &BackendSystem::online_enabled)
+        .def("get_refined_poses", &BackendSystem::get_refined_poses)
+        .def("export_online_trajectory",
+             &BackendSystem::export_online_trajectory)
         .def("run_offline_ba", &BackendSystem::run_offline_ba);
 #endif
 

@@ -25,8 +25,14 @@
 #define OV_SRVINS_BACKENDSYSTEM_H
 
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstddef>
+#include <deque>
+#include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <Eigen/Eigen>
@@ -43,6 +49,7 @@ class CeresBundleAdjuster;
 
 namespace ov_core {
 class FeatureDatabase;
+class CamBase;
 }
 
 namespace ov_srvins {
@@ -117,10 +124,31 @@ public:
 
   BackendSystem(const BackendOptions &opts, const NoiseManager &imu_noises,
                 double gravity_mag);
+  /// Stops the online worker thread (if running)
+  ~BackendSystem();
 
   /// Append IMU readings (sorted by timestamp) for the preintegrated
   /// factors. Feed the same stream that goes to the estimator.
   void feed_imu(const std::vector<ov_core::ImuData> &msgs);
+
+  /// Snapshot the (constant) calibration from the state: camera models,
+  /// intrinsics, cam-IMU extrinsics and the cam-IMU time offset. Called
+  /// automatically on the first record_pose / run_offline_ba; the online
+  /// worker needs it to build reconstructions without touching State.
+  void cache_calibration(const State &state);
+
+  /// --- online fixed-lag windowed BA (Phase 2b) ----------------------------
+
+  bool online_enabled() const { return opts_.online_enabled; }
+
+  /// Latest refined poses from the online windowed solves, keyed by keyframe
+  /// timestamp (clone convention: R_GtoI, p_IinG). A keyframe's estimate is
+  /// refreshed every solve while it is inside the window.
+  std::map<double, std::pair<Mat3, Vec3>> get_refined_poses();
+
+  /// Write the latest refined poses to a file (same format as the filter
+  /// output: timestamp px py pz qx qy qz qw)
+  void export_online_trajectory(const std::string &path);
 
   /// Snapshot feature observations at `timestamp` (call BEFORE the visual
   /// update, after feed_camera, while tracks consumed by the update are
@@ -132,7 +160,10 @@ public:
   /// visual update). Returns false if no keyframe is pending.
   bool record_pose(const State &state);
 
-  size_t num_keyframes() const { return keyframes_.size(); }
+  size_t num_keyframes() const {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    return keyframes_.size();
+  }
 
   /// Assemble the reconstruction, triangulate landmarks, run BA, and write
   /// the refined trajectory (same format as the filter output:
@@ -144,10 +175,16 @@ public:
   /// frame_timestamps must be ordered by ascending frame id (1..N).
   /// If `imu` is given, its factors/parameter blocks are injected into the
   /// Ceres problem before each solve (it must outlive the call).
+  /// max_iterations/max_solver_time override the option budgets when
+  /// positive (used by the online worker); prune=false skips outlier
+  /// pruning + re-solve.
   BackendSummary solve_and_export(colmap::Reconstruction &recon,
                                   const std::vector<double> &frame_timestamps,
                                   const std::string &traj_out_path,
-                                  ImuConstraints *imu = nullptr);
+                                  ImuConstraints *imu = nullptr,
+                                  int max_iterations = -1,
+                                  double max_solver_time = 0,
+                                  bool prune = true);
 
   /// Build the IMU constraints over a set of keyframes (must be the same
   /// keyframes/ordering that enter the reconstruction). Returns nullptr if
@@ -159,12 +196,12 @@ public:
       const NoiseManager &imu_noises, double gravity_mag, bool enabled);
 
 private:
-  /// Build the colmap reconstruction from the recorded keyframes (poses,
-  /// stereo rig, triangulated tracks). Keyframes without a pose are dropped;
-  /// `used_keyframes` (if given) receives the keyframes that made it in, in
-  /// frame-id order.
+  /// Build the colmap reconstruction from a set of keyframes (poses, stereo
+  /// rig, triangulated tracks) using the cached calibration. Keyframes
+  /// without a pose are dropped; `used_keyframes` (if given) receives the
+  /// keyframes that made it in, in frame-id order.
   std::unique_ptr<colmap::Reconstruction>
-  build_reconstruction(const std::vector<Keyframe> &keyframes, State &state,
+  build_reconstruction(const std::vector<Keyframe> &keyframes,
                        std::vector<double> &frame_timestamps,
                        std::vector<Keyframe> *used_keyframes = nullptr);
 
@@ -175,14 +212,44 @@ private:
                           colmap::Reconstruction &recon,
                           ImuConstraints &imu);
 
+  /// Online worker: repeatedly solves the sliding window of the newest
+  /// BackendOptions::window_size keyframes every window_solve_stride new
+  /// keyframes, publishing refined poses into refined_poses_.
+  void online_worker();
+
   BackendOptions opts_;
   NoiseManager imu_noises_;
   Eigen::Vector3d gravity_ = Eigen::Vector3d(0, 0, 9.81);
+
+  // recording (written by the filter thread, read by the online worker
+  // under record_mtx_)
+  mutable std::mutex record_mtx_;
   std::vector<Keyframe> keyframes_;
   std::vector<ov_core::ImuData> imu_data_;
   int num_triang_rejected_ = 0;
   int record_count_ = 0;
   bool keyframe_pending_pose_ = false;
+
+  // cached calibration (constant after construction of State)
+  bool calib_ready_ = false;
+  std::map<size_t, std::shared_ptr<ov_core::CamBase>> calib_cameras_;
+  std::map<size_t, VecX> calib_intrinsics_;
+  std::map<size_t, Mat3> calib_R_ItoC_;
+  std::map<size_t, Vec3> calib_p_IinC_;
+  double t_cam_to_imu_ = 0.0;
+
+  // online worker state (worker_stop_/solved_through_keyframe_ live under
+  // record_mtx_; refined_poses_ has its own mutex since it is written by
+  // the worker and read by the filter thread)
+  std::thread worker_;
+  std::condition_variable worker_cv_;
+  bool worker_stop_ = false;
+  size_t solved_through_keyframe_ = 0; // keyframes_ size at last solve
+  std::mutex results_mtx_;
+  std::map<double, std::pair<Mat3, Vec3>> refined_poses_;
+  int online_solve_count_ = 0; // worker thread only
+  double online_solve_ms_sum_ = 0;
+  double online_solve_ms_max_ = 0;
 };
 
 } // namespace ov_srvins

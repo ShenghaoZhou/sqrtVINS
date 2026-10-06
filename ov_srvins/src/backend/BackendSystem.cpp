@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <unordered_map>
@@ -68,14 +69,65 @@ static double mean_reproj_capped(colmap::Reconstruction &recon,
 BackendSystem::BackendSystem(const BackendOptions &opts,
                              const NoiseManager &imu_noises, double gravity_mag)
     : opts_(opts), imu_noises_(imu_noises),
-      gravity_(0, 0, gravity_mag) {}
+      gravity_(0, 0, gravity_mag) {
+  if (opts_.online_enabled) {
+    worker_ = std::thread(&BackendSystem::online_worker, this);
+  }
+}
+
+BackendSystem::~BackendSystem() {
+  {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    worker_stop_ = true;
+  }
+  worker_cv_.notify_all();
+  if (worker_.joinable())
+    worker_.join();
+}
 
 void BackendSystem::feed_imu(const std::vector<ov_core::ImuData> &msgs) {
+  std::lock_guard<std::mutex> lk(record_mtx_);
   imu_data_.insert(imu_data_.end(), msgs.begin(), msgs.end());
+}
+
+void BackendSystem::cache_calibration(const State &state) {
+  if (calib_ready_)
+    return;
+  for (const auto &cam_pair : state.cam_intrinsics_cameras) {
+    const size_t cam_id = cam_pair.first;
+    calib_cameras_[cam_id] = cam_pair.second;
+    calib_intrinsics_[cam_id] = state.cam_intrinsics.at(cam_id)->value();
+  }
+  for (const auto &calib_pair : state.calib_IMUtoCAM) {
+    calib_R_ItoC_[calib_pair.first] = calib_pair.second->Rot();
+    calib_p_IinC_[calib_pair.first] = calib_pair.second->pos();
+  }
+  t_cam_to_imu_ = state.calib_dt_CAMtoIMU->value()(0);
+  calib_ready_ = true;
+}
+
+std::map<double, std::pair<Mat3, Vec3>> BackendSystem::get_refined_poses() {
+  std::lock_guard<std::mutex> lk(results_mtx_);
+  return refined_poses_;
+}
+
+void BackendSystem::export_online_trajectory(const std::string &path) {
+  std::map<double, std::pair<Mat3, Vec3>> poses = get_refined_poses();
+  if (poses.empty())
+    return;
+  std::ofstream out(path);
+  out << std::setprecision(9) << std::fixed;
+  for (const auto &[timestamp, pose] : poses) {
+    const Eigen::Quaternion<DataType> q_ItoG(pose.first.transpose());
+    out << timestamp << " " << pose.second(0) << " " << pose.second(1) << " "
+        << pose.second(2) << " " << q_ItoG.x() << " " << q_ItoG.y() << " "
+        << q_ItoG.z() << " " << q_ItoG.w() << "\n";
+  }
 }
 
 void BackendSystem::record_observations(double timestamp,
                                         ov_core::FeatureDatabase &db) {
+  std::lock_guard<std::mutex> lk(record_mtx_);
   // Start a keyframe only every keyframe_stride calls; intermediate frames
   // are not recorded at all (offline decimation)
   const bool is_keyframe = (record_count_ % opts_.keyframe_stride) == 0;
@@ -103,54 +155,62 @@ void BackendSystem::record_observations(double timestamp,
 }
 
 bool BackendSystem::record_pose(const State &state) {
-  if (!keyframe_pending_pose_)
-    return false;
-  keyframe_pending_pose_ = false;
-  if (state.clones_IMU.empty())
-    return false;
+  bool completed = false;
+  {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    cache_calibration(state);
+    if (!keyframe_pending_pose_)
+      return false;
+    keyframe_pending_pose_ = false;
+    if (state.clones_IMU.empty())
+      return false;
 
-  const auto &clone = state.clones_IMU.rbegin()->second;
-  Keyframe &kf = keyframes_.back();
-  if (std::abs(state.clones_IMU.rbegin()->first - kf.timestamp) > 1e-9) {
-    PRINT_ERROR(YELLOW
-                "[BACKEND]: keyframe pose/observation timestamp mismatch "
-                "(%.9f vs %.9f), dropping keyframe\n" RESET,
-                state.clones_IMU.rbegin()->first, kf.timestamp);
-    return false;
+    const auto &clone = state.clones_IMU.rbegin()->second;
+    Keyframe &kf = keyframes_.back();
+    if (std::abs(state.clones_IMU.rbegin()->first - kf.timestamp) > 1e-9) {
+      PRINT_ERROR(YELLOW
+                  "[BACKEND]: keyframe pose/observation timestamp mismatch "
+                  "(%.9f vs %.9f), dropping keyframe\n" RESET,
+                  state.clones_IMU.rbegin()->first, kf.timestamp);
+      return false;
+    }
+    kf.R_GtoI = clone->Rot();
+    kf.p_IinG = clone->pos();
+    // velocity/bias snapshot initializes the IMU-factor blocks (Phase 2)
+    if (state.imu != nullptr) {
+      kf.v_IinG = state.imu->vel();
+      kf.bg = state.imu->bias_g();
+      kf.ba = state.imu->bias_a();
+    }
+    kf.has_pose = true;
+    completed = true;
   }
-  kf.R_GtoI = clone->Rot();
-  kf.p_IinG = clone->pos();
-  // velocity/bias snapshot initializes the IMU-factor blocks (Phase 2)
-  if (state.imu != nullptr) {
-    kf.v_IinG = state.imu->vel();
-    kf.bg = state.imu->bias_g();
-    kf.ba = state.imu->bias_a();
-  }
-  kf.has_pose = true;
+  if (completed)
+    worker_cv_.notify_all(); // a complete keyframe is available
   return true;
 }
 
 std::unique_ptr<colmap::Reconstruction> BackendSystem::build_reconstruction(
-    const std::vector<Keyframe> &keyframes_in, State &state,
+    const std::vector<Keyframe> &keyframes_in,
     std::vector<double> &frame_timestamps,
     std::vector<Keyframe> *used_keyframes) {
   auto recon = std::make_unique<colmap::Reconstruction>();
 
   // --- cameras + rig (IMU reference sensor, cameras as rig members) ---
-  for (const auto &cam_pair : state.cam_intrinsics_cameras) {
+  for (const auto &cam_pair : calib_cameras_) {
     const size_t cam_id = cam_pair.first;
     recon->AddCamera(colmap_adapter::camera_from_ov(
-        cam_id, *cam_pair.second, state.cam_intrinsics.at(cam_id)->value()));
+        cam_id, *cam_pair.second, calib_intrinsics_.at(cam_id)));
   }
 
   colmap::Rig rig;
   rig.SetRigId(1);
   rig.AddRefSensor(kImuSensorId);
-  for (const auto &calib_pair : state.calib_IMUtoCAM) {
+  for (const auto &calib_pair : calib_R_ItoC_) {
     const size_t cam_id = calib_pair.first;
     rig.AddSensor(colmap::sensor_t(colmap::SensorType::CAMERA, cam_id),
-                  colmap_adapter::sensor_from_rig(calib_pair.second->Rot(),
-                                                  calib_pair.second->pos()));
+                  colmap_adapter::sensor_from_rig(
+                      calib_pair.second, calib_p_IinC_.at(cam_id)));
   }
   recon->AddRig(rig);
 
@@ -243,13 +303,13 @@ std::unique_ptr<colmap::Reconstruction> BackendSystem::build_reconstruction(
     bool valid = true;
     for (const auto &ob : obs) {
       const Keyframe &kf = *keyframes[ob.kf_idx];
-      const auto &calib = state.calib_IMUtoCAM.at(ob.cam_id);
       cams_from_world.push_back(colmap_adapter::cam_from_world_matrix(
-          colmap_adapter::sensor_from_rig(calib->Rot(), calib->pos()),
+          colmap_adapter::sensor_from_rig(calib_R_ItoC_.at(ob.cam_id),
+                                          calib_p_IinC_.at(ob.cam_id)),
           colmap_adapter::rig_from_world(kf.R_GtoI, kf.p_IinG)));
       // undistort to normalized coordinates for triangulation
-      auto cam_it = state.cam_intrinsics_cameras.find(ob.cam_id);
-      if (cam_it == state.cam_intrinsics_cameras.end()) {
+      auto cam_it = calib_cameras_.find(ob.cam_id);
+      if (cam_it == calib_cameras_.end()) {
         valid = false;
         break;
       }
@@ -273,9 +333,9 @@ std::unique_ptr<colmap::Reconstruction> BackendSystem::build_reconstruction(
     bool bad = false;
     for (const auto &ob : obs) {
       const Keyframe &kf = *keyframes[ob.kf_idx];
-      const auto &calib = state.calib_IMUtoCAM.at(ob.cam_id);
       const colmap::Rigid3d cam_from_world =
-          colmap_adapter::sensor_from_rig(calib->Rot(), calib->pos()) *
+          colmap_adapter::sensor_from_rig(calib_R_ItoC_.at(ob.cam_id),
+                                          calib_p_IinC_.at(ob.cam_id)) *
           colmap_adapter::rig_from_world(kf.R_GtoI, kf.p_IinG);
       const double e2 = colmap::CalculateSquaredReprojectionError(
           ob.uv, xyz, cam_from_world, recon->Camera(ob.cam_id));
@@ -391,7 +451,8 @@ void BackendSystem::inject_imu_factors(colmap::CeresBundleAdjuster &adjuster,
 
 BackendSummary BackendSystem::solve_and_export(
     colmap::Reconstruction &recon, const std::vector<double> &frame_timestamps,
-    const std::string &traj_out_path, ImuConstraints *imu) {
+    const std::string &traj_out_path, ImuConstraints *imu, int max_iterations,
+    double max_solver_time, bool prune) {
   BackendSummary summary;
   summary.num_keyframes = static_cast<int>(frame_timestamps.size());
   summary.num_images = static_cast<int>(recon.NumImages());
@@ -432,7 +493,11 @@ BackendSummary BackendSystem::solve_and_export(
     ba_options.ceres->loss_function_scale = opts_.loss_scale;
   }
   ba_options.ceres->solver_options.max_num_iterations =
-      opts_.max_num_iterations;
+      (max_iterations > 0) ? max_iterations : opts_.max_num_iterations;
+  if (max_solver_time > 0) {
+    ba_options.ceres->solver_options.max_solver_time_in_seconds =
+        max_solver_time;
+  }
   ba_options.ceres->solver_options.num_threads = opts_.num_threads;
 
   auto adjuster =
@@ -451,7 +516,7 @@ BackendSummary BackendSystem::solve_and_export(
   summary.mean_reproj_error_after = mean_reproj_capped(recon);
 
   // --- prune outlier points, then (optionally) re-solve --------------------
-  if (opts_.max_reproj_error_px > 0) {
+  if (prune && opts_.max_reproj_error_px > 0) {
     const double thr2 = opts_.max_reproj_error_px * opts_.max_reproj_error_px;
     std::vector<colmap::point3D_t> to_delete;
     for (const auto &point_pair : recon.Points3D()) {
@@ -514,10 +579,21 @@ BackendSummary BackendSystem::solve_and_export(
 
 BackendSummary BackendSystem::run_offline_ba(State &state,
                                              const std::string &traj_out_path) {
+  // offline BA is a post-run operation: stop the online worker first so the
+  // recorded data is no longer touched concurrently
+  {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    worker_stop_ = true;
+    cache_calibration(state);
+  }
+  worker_cv_.notify_all();
+  if (worker_.joinable())
+    worker_.join();
+
   num_triang_rejected_ = 0;
   std::vector<double> frame_timestamps;
   std::vector<Keyframe> used_keyframes;
-  auto recon = build_reconstruction(keyframes_, state, frame_timestamps,
+  auto recon = build_reconstruction(keyframes_, frame_timestamps,
                                     &used_keyframes);
   PRINT_INFO("[BACKEND]: built reconstruction: %zu keyframes, %d images, "
              "%zu points (%d triangulations rejected)\n",
@@ -525,11 +601,95 @@ BackendSummary BackendSystem::run_offline_ba(State &state,
              recon->NumPoints3D(), num_triang_rejected_);
 
   // Phase 2: preintegrated IMU factors between consecutive keyframes
-  const double t_cam_to_imu = state.calib_dt_CAMtoIMU->value()(0);
-  auto imu = build_imu_constraints(used_keyframes, imu_data_, t_cam_to_imu,
+  auto imu = build_imu_constraints(used_keyframes, imu_data_, t_cam_to_imu_,
                                    imu_noises_, gravity_(2),
                                    opts_.use_imu_factors);
   return solve_and_export(*recon, frame_timestamps, traj_out_path, imu.get());
+}
+
+void BackendSystem::online_worker() {
+  std::unique_lock<std::mutex> lk(record_mtx_);
+  while (true) {
+    worker_cv_.wait(lk, [&] {
+      return worker_stop_ ||
+             (calib_ready_ &&
+              static_cast<int>(keyframes_.size()) >= opts_.window_size &&
+              keyframes_.size() >=
+                  solved_through_keyframe_ +
+                      static_cast<size_t>(opts_.window_solve_stride));
+    });
+    if (worker_stop_)
+      break;
+    solved_through_keyframe_ = keyframes_.size();
+
+    // snapshot the sliding window and the IMU range covering it
+    std::vector<Keyframe> window(keyframes_.end() - opts_.window_size,
+                                 keyframes_.end());
+    const double t0 = window.front().timestamp + t_cam_to_imu_;
+    const double t1 = window.back().timestamp + t_cam_to_imu_;
+    std::vector<ov_core::ImuData> imu_slice;
+    {
+      auto it0 = std::lower_bound(imu_data_.begin(), imu_data_.end(), t0,
+                                  [](const ov_core::ImuData &d, double t) {
+                                    return d.timestamp < t;
+                                  });
+      if (it0 != imu_data_.begin())
+        --it0; // keep one bracketing sample for boundary interpolation
+      auto it1 = std::lower_bound(imu_data_.begin(), imu_data_.end(), t1,
+                                  [](const ov_core::ImuData &d, double t) {
+                                    return d.timestamp < t;
+                                  });
+      if (it1 != imu_data_.end())
+        ++it1;
+      imu_slice.assign(it0, it1);
+    }
+    lk.unlock();
+
+    // build + solve the window without holding the recording lock
+    const auto solve_t0 = std::chrono::steady_clock::now();
+    num_triang_rejected_ = 0;
+    std::vector<double> frame_timestamps;
+    std::vector<Keyframe> used_keyframes;
+    auto recon = build_reconstruction(window, frame_timestamps,
+                                      &used_keyframes);
+    auto imu = build_imu_constraints(used_keyframes, imu_slice, t_cam_to_imu_,
+                                     imu_noises_, gravity_(2),
+                                     opts_.use_imu_factors);
+    BackendSummary summary = solve_and_export(
+        *recon, frame_timestamps, "", imu.get(), opts_.window_max_iterations,
+        opts_.window_max_solver_time, false);
+
+    // publish the refined poses (keyed by keyframe timestamp)
+    if (summary.solved) {
+      std::lock_guard<std::mutex> rlk(results_mtx_);
+      for (size_t i = 0; i < frame_timestamps.size(); i++) {
+        const colmap::frame_t frame_id = i + 1;
+        if (!recon->ExistsFrame(frame_id))
+          continue;
+        Mat3 R_GtoI;
+        Vec3 p_IinG;
+        colmap_adapter::rig_from_world_to_clone(
+            recon->Frame(frame_id).RigFromWorld(), R_GtoI, p_IinG);
+        refined_poses_[frame_timestamps[i]] = {R_GtoI, p_IinG};
+      }
+    }
+    const double solve_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - solve_t0)
+            .count();
+    online_solve_count_++;
+    online_solve_ms_sum_ += solve_ms;
+    online_solve_ms_max_ = std::max(online_solve_ms_max_, solve_ms);
+    if (online_solve_count_ % 50 == 0) {
+      PRINT_INFO("[BACKEND]: online solves=%d avg=%.1f ms max=%.1f ms "
+                 "(window=%zu kf, %d pts)\n",
+                 online_solve_count_,
+                 online_solve_ms_sum_ / online_solve_count_,
+                 online_solve_ms_max_, frame_timestamps.size(),
+                 summary.num_points);
+    }
+    lk.lock();
+  }
 }
 
 } // namespace ov_srvins

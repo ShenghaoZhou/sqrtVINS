@@ -83,6 +83,15 @@ void VinsOptions::print_and_load_backend(
                          backend_options.refine_after_pruning);
     parser->parse_config("backend_use_imu_factors",
                          backend_options.use_imu_factors);
+    parser->parse_config("backend_online_enabled",
+                         backend_options.online_enabled);
+    parser->parse_config("backend_window_size", backend_options.window_size);
+    parser->parse_config("backend_window_solve_stride",
+                         backend_options.window_solve_stride);
+    parser->parse_config("backend_window_max_iterations",
+                         backend_options.window_max_iterations);
+    parser->parse_config("backend_window_max_solver_time",
+                         backend_options.window_max_solver_time);
     parser->parse_config("backend_max_num_iterations",
                          backend_options.max_num_iterations);
     parser->parse_config("backend_num_threads", backend_options.num_threads);

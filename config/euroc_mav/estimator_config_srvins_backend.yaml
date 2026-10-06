@@ -173,6 +173,11 @@ backend_min_track_length: 3
 backend_max_reproj_error: 5.0
 backend_refine_after_pruning: true
 backend_use_imu_factors: true
+backend_online_enabled: false
+backend_window_size: 15
+backend_window_solve_stride: 2
+backend_window_max_iterations: 15
+backend_window_max_solver_time: 0.05
 backend_max_num_iterations: 100
 backend_num_threads: 8
 backend_loss_scale: 1.0

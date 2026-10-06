@@ -449,6 +449,63 @@ void BackendSystem::inject_imu_factors(colmap::CeresBundleAdjuster &adjuster,
              added, num_keyframes);
 }
 
+void BackendSystem::add_loop_constraint(double timestamp_i, double timestamp_j,
+                                        const Eigen::Matrix3d &R_ItoJ,
+                                        const Eigen::Vector3d &p_JinI,
+                                        const Eigen::Matrix<double, 6, 6> &cov) {
+  LoopConstraint c;
+  c.timestamp_i = timestamp_i;
+  c.timestamp_j = timestamp_j;
+  c.factor = RelativePoseFactorData::FromMeasurement(R_ItoJ, p_JinI, cov);
+  std::lock_guard<std::mutex> lk(record_mtx_);
+  loop_constraints_.push_back(std::move(c));
+}
+
+void BackendSystem::inject_loop_factors(
+    colmap::CeresBundleAdjuster &adjuster, colmap::Reconstruction &recon,
+    const std::vector<double> &frame_timestamps) {
+  // Copy the registered constraints (the solve must not hold the record lock)
+  std::vector<LoopConstraint> constraints;
+  {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    constraints = loop_constraints_;
+  }
+  if (constraints.empty())
+    return;
+
+  auto &problem = adjuster.Problem();
+  size_t added = 0;
+  for (const auto &c : constraints) {
+    // frame_timestamps is ordered by ascending frame id (1..N)
+    auto find_frame = [&](double t, colmap::frame_t &fid) {
+      const auto it =
+          std::lower_bound(frame_timestamps.begin(), frame_timestamps.end(),
+                           t - 1e-6);
+      const size_t idx = static_cast<size_t>(it - frame_timestamps.begin());
+      if (idx >= frame_timestamps.size() ||
+          std::abs(frame_timestamps.at(idx) - t) > 1e-6) {
+        return false;
+      }
+      fid = static_cast<colmap::frame_t>(idx + 1);
+      return recon.ExistsFrame(fid);
+    };
+    colmap::frame_t frame_i, frame_j;
+    if (!find_frame(c.timestamp_i, frame_i) ||
+        !find_frame(c.timestamp_j, frame_j)) {
+      continue; // endpoint(s) not in this window
+    }
+    auto *cost = new ceres::AutoDiffCostFunction<RelativePoseFactor, 6, 7, 7>(
+        new RelativePoseFactor(c.factor));
+    problem->AddResidualBlock(cost, nullptr,
+                              recon.Frame(frame_i).RigFromWorld().params.data(),
+                              recon.Frame(frame_j).RigFromWorld().params.data());
+    added++;
+  }
+  if (added > 0) {
+    PRINT_INFO("[BACKEND]: injected %zu loop-closure factors\n", added);
+  }
+}
+
 BackendSummary BackendSystem::solve_and_export(
     colmap::Reconstruction &recon, const std::vector<double> &frame_timestamps,
     const std::string &traj_out_path, ImuConstraints *imu, int max_iterations,
@@ -504,6 +561,7 @@ BackendSummary BackendSystem::solve_and_export(
       colmap::CreateDefaultCeresBundleAdjuster(ba_options, config, recon);
   if (imu != nullptr)
     inject_imu_factors(*adjuster, recon, *imu);
+  inject_loop_factors(*adjuster, recon, frame_timestamps);
   auto ba_summary = adjuster->Solve();
   summary.solved = ba_summary->IsSolutionUsable();
   if (opts_.print_summary) {
@@ -546,6 +604,7 @@ BackendSummary BackendSystem::solve_and_export(
           colmap::CreateDefaultCeresBundleAdjuster(ba_options, config, recon);
       if (imu != nullptr)
         inject_imu_factors(*adjuster, recon, *imu);
+      inject_loop_factors(*adjuster, recon, frame_timestamps);
       ba_summary = adjuster->Solve();
       summary.solved = ba_summary->IsSolutionUsable();
       if (opts_.print_summary) {
@@ -677,14 +736,13 @@ void BackendSystem::online_worker() {
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - solve_t0)
             .count();
-    online_solve_count_++;
+    const int solve_count = ++online_solve_count_;
     online_solve_ms_sum_ += solve_ms;
     online_solve_ms_max_ = std::max(online_solve_ms_max_, solve_ms);
-    if (online_solve_count_ % 50 == 0) {
+    if (solve_count % 50 == 0) {
       PRINT_INFO("[BACKEND]: online solves=%d avg=%.1f ms max=%.1f ms "
                  "(window=%zu kf, %d pts)\n",
-                 online_solve_count_,
-                 online_solve_ms_sum_ / online_solve_count_,
+                 solve_count, online_solve_ms_sum_ / solve_count,
                  online_solve_ms_max_, frame_timestamps.size(),
                  summary.num_points);
     }

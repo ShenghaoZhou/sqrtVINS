@@ -95,6 +95,13 @@ PYBIND11_MODULE(ov_srvins_py, m) {
                        &BackendOptions::window_max_iterations)
         .def_readwrite("window_max_solver_time",
                        &BackendOptions::window_max_solver_time)
+        .def_readwrite("feedback_enabled", &BackendOptions::feedback_enabled)
+        .def_readwrite("feedback_sigma_pos",
+                       &BackendOptions::feedback_sigma_pos)
+        .def_readwrite("feedback_sigma_ori",
+                       &BackendOptions::feedback_sigma_ori)
+        .def_readwrite("feedback_gate_chi2",
+                       &BackendOptions::feedback_gate_chi2)
         .def_readwrite("max_num_iterations",
                        &BackendOptions::max_num_iterations)
         .def_readwrite("num_threads", &BackendOptions::num_threads)
@@ -282,6 +289,8 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def("get_refined_poses", &BackendSystem::get_refined_poses)
         .def("export_online_trajectory",
              &BackendSystem::export_online_trajectory)
+        .def("add_loop_constraint", &BackendSystem::add_loop_constraint)
+        .def("num_loop_constraints", &BackendSystem::num_loop_constraints)
         .def("run_offline_ba", &BackendSystem::run_offline_ba);
 #endif
 

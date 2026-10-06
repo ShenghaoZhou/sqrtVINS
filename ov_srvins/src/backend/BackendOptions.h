@@ -86,6 +86,24 @@ struct BackendOptions {
   /// Wall-clock budget per windowed solve [s] (0 = no limit)
   double window_max_solver_time = 0.05;
 
+  /// --- filter feedback (Phase 3) -------------------------------------------
+
+  /// Feed the refined window poses back into the filter as soft pose
+  /// measurements on the matching clones (requires online_enabled)
+  bool feedback_enabled = false;
+
+  /// Feedback position measurement noise [m] per axis. Conservative (large)
+  /// on purpose: the window information overlaps the filter's own visual
+  /// measurements, so small values double-count information.
+  double feedback_sigma_pos = 0.05;
+
+  /// Feedback orientation measurement noise [rad] per axis
+  double feedback_sigma_ori = 0.02;
+
+  /// Per-clone gate on the whitened 6-dof residual squared norm; feedback
+  /// for clones above this is dropped (protects against bad window solves)
+  double feedback_gate_chi2 = 50.0;
+
   /// Ceres solver settings
   int max_num_iterations = 100;
   int num_threads = 4;

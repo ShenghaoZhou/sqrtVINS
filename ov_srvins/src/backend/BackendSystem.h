@@ -38,6 +38,7 @@
 #include <Eigen/Eigen>
 
 #include "backend/BackendOptions.h"
+#include "backend/RelativePoseFactor.h"
 #include "utils/DataType.h"
 #include "utils/NoiseManager.h"
 #include "utils/sensor_data.h"
@@ -141,6 +142,13 @@ public:
 
   bool online_enabled() const { return opts_.online_enabled; }
 
+  /// Backend options (read-only)
+  const BackendOptions &options() const { return opts_; }
+
+  /// Number of windowed solves completed so far (monotonic; poll to detect
+  /// a fresh get_refined_poses() publication)
+  int online_solve_count() const { return online_solve_count_.load(); }
+
   /// Latest refined poses from the online windowed solves, keyed by keyframe
   /// timestamp (clone convention: R_GtoI, p_IinG). A keyframe's estimate is
   /// refreshed every solve while it is inside the window.
@@ -149,6 +157,30 @@ public:
   /// Write the latest refined poses to a file (same format as the filter
   /// output: timestamp px py pz qx qy qz qw)
   void export_online_trajectory(const std::string &path);
+
+  /// --- loop-closure constraints (Phase 3c) ---------------------------------
+
+  /// Register a relative-pose (loop-closure) constraint between two
+  /// keyframes, keyed by their camera timestamps. The constraint is injected
+  /// into every subsequent solve (online windowed and offline) whose frame
+  /// set contains both keyframes. R_ItoJ maps i-IMU coordinates to j-IMU
+  /// coordinates, p_JinI is the origin of j expressed in i, and cov is the
+  /// 6x6 covariance of the [theta, p] measurement.
+  ///
+  /// Retrieval (place recognition) is intentionally out of scope here:
+  /// colmap-lite excludes the feature/retrieval modules and the frontend
+  /// keeps no descriptors, so constraints are expected from an external
+  /// loop-closure module calling this method (thread-safe).
+  void add_loop_constraint(double timestamp_i, double timestamp_j,
+                           const Eigen::Matrix3d &R_ItoJ,
+                           const Eigen::Vector3d &p_JinI,
+                           const Eigen::Matrix<double, 6, 6> &cov);
+
+  /// Number of registered loop constraints
+  size_t num_loop_constraints() const {
+    std::lock_guard<std::mutex> lk(record_mtx_);
+    return loop_constraints_.size();
+  }
 
   /// Snapshot feature observations at `timestamp` (call BEFORE the visual
   /// update, after feed_camera, while tracks consumed by the update are
@@ -212,6 +244,19 @@ private:
                           colmap::Reconstruction &recon,
                           ImuConstraints &imu);
 
+  /// One registered loop constraint (measurement + whitening)
+  struct LoopConstraint {
+    double timestamp_i = -1, timestamp_j = -1; // keyframe (camera) times
+    RelativePoseFactorData factor;
+  };
+
+  /// Inject registered loop-closure residual blocks whose endpoints both
+  /// exist in the current frame set (matched via frame_timestamps, which is
+  /// ordered by ascending frame id 1..N). Called by solve_and_export.
+  void inject_loop_factors(colmap::CeresBundleAdjuster &adjuster,
+                           colmap::Reconstruction &recon,
+                           const std::vector<double> &frame_timestamps);
+
   /// Online worker: repeatedly solves the sliding window of the newest
   /// BackendOptions::window_size keyframes every window_solve_stride new
   /// keyframes, publishing refined poses into refined_poses_.
@@ -247,7 +292,11 @@ private:
   size_t solved_through_keyframe_ = 0; // keyframes_ size at last solve
   std::mutex results_mtx_;
   std::map<double, std::pair<Mat3, Vec3>> refined_poses_;
-  int online_solve_count_ = 0; // worker thread only
+
+  // registered loop-closure constraints (under record_mtx_; copied out
+  // before each solve so solving never holds the lock)
+  std::vector<LoopConstraint> loop_constraints_;
+  std::atomic<int> online_solve_count_{0}; // incremented by the worker
   double online_solve_ms_sum_ = 0;
   double online_solve_ms_max_ = 0;
 };

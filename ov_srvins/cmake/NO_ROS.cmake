@@ -71,6 +71,7 @@ list(APPEND LIBRARY_SOURCES
         src/core/InitRunner.cpp
         src/core/System.cpp
         src/core/VinsOptions.cpp
+        src/update/UpdaterBackend.cpp
         src/update/UpdaterHelper.cpp
         src/update/UpdaterMSCKF.cpp
         src/update/UpdaterSLAM.cpp

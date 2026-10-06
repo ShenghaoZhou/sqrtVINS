@@ -178,6 +178,11 @@ backend_window_size: 15
 backend_window_solve_stride: 2
 backend_window_max_iterations: 15
 backend_window_max_solver_time: 0.05
+# Phase 3: soft pose feedback from the windowed BA into the filter
+backend_feedback_enabled: false
+backend_feedback_sigma_pos: 0.05
+backend_feedback_sigma_ori: 0.02
+backend_feedback_gate_chi2: 50.0
 backend_max_num_iterations: 100
 backend_num_threads: 8
 backend_loss_scale: 1.0

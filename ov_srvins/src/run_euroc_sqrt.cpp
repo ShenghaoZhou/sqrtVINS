@@ -51,6 +51,7 @@
 #include "core/VinsOptions.h"
 #ifdef SQRTVINS_BACKEND
 #include "backend/BackendSystem.h"
+#include "update/UpdaterBackend.h"
 #endif
 #include "state/State.h"
 #include "types/IMU.h"
@@ -95,6 +96,9 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   cv::Mat zero_mask;
   size_t imu_idx = 0;
   int processed = 0;
+#ifdef SQRTVINS_BACKEND
+  int last_backend_solve_count = -1;
+#endif
   auto t_start = std::chrono::steady_clock::now();
 
   // Decode upcoming stereo pairs on a worker thread (PNG decode is the
@@ -189,6 +193,19 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
 #ifdef SQRTVINS_BACKEND
       if (sys.backend) {
         sys.backend->record_pose(*estimator->get_state());
+        // Phase 3: soft pose feedback from the latest windowed-BA solve
+        if (sys.backend->options().feedback_enabled) {
+          const int solve_count = sys.backend->online_solve_count();
+          if (solve_count != last_backend_solve_count) {
+            last_backend_solve_count = solve_count;
+            const BackendOptions &bopts = sys.backend->options();
+            UpdaterBackend::update(estimator->get_state(),
+                                   sys.backend->get_refined_poses(),
+                                   bopts.feedback_sigma_ori,
+                                   bopts.feedback_sigma_pos,
+                                   bopts.feedback_gate_chi2);
+          }
+        }
       }
 #endif
     }

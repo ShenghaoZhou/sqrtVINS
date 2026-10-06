@@ -38,6 +38,7 @@
 #include "backend/BackendSystem.h"
 #include "backend/ImuFactor.h"
 #include "backend/ImuPreintegration.h"
+#include "backend/RelativePoseFactor.h"
 
 #include "colmap/scene/reconstruction.h"
 
@@ -452,6 +453,78 @@ static int test_synthetic_vio_ba() {
   return EXIT_SUCCESS;
 }
 
+static int test_relative_pose_factor() {
+  const TrueMotion motion;
+  const double t_i = 0.4, t_j = 2.1;
+
+  // clone convention: R_GtoI = C^T, p_IinG = p
+  const Eigen::Matrix3d R_i = motion.C(t_i).transpose();
+  const Eigen::Matrix3d R_j = motion.C(t_j).transpose();
+  const Eigen::Vector3d p_i = motion.p(t_i);
+  const Eigen::Vector3d p_j = motion.p(t_j);
+
+  // relative measurement (j expressed in i)
+  const Eigen::Matrix3d R_ItoJ = R_j * R_i.transpose();
+  const Eigen::Vector3d p_JinI = R_j * (p_j - p_i);
+  Eigen::Matrix<double, 6, 6> cov = Eigen::Matrix<double, 6, 6>::Identity();
+  cov.block<3, 3>(0, 0) *= 1e-4; // 0.01 rad per axis
+  cov.block<3, 3>(3, 3) *= 1e-2; // 0.1 m per axis
+  const RelativePoseFactorData data =
+      RelativePoseFactorData::FromMeasurement(R_ItoJ, p_JinI, cov);
+  RelativePoseFactor factor(data);
+
+  // colmap pose blocks [qx qy qz qw tx ty tz] with t = -R * p
+  auto make_block = [](const Eigen::Matrix3d &R, const Eigen::Vector3d &p,
+                       double *pose) {
+    const Eigen::Quaterniond q(R);
+    pose[0] = q.x();
+    pose[1] = q.y();
+    pose[2] = q.z();
+    pose[3] = q.w();
+    const Eigen::Vector3d t = -R * p;
+    pose[4] = t(0);
+    pose[5] = t(1);
+    pose[6] = t(2);
+  };
+  double pose_i[7], pose_j[7];
+  make_block(R_i, p_i, pose_i);
+  make_block(R_j, p_j, pose_j);
+
+  // 1) residual at the exact poses is zero
+  double res[6];
+  factor(pose_i, pose_j, res);
+  CHECK_TRUE(Eigen::Map<Eigen::Vector6d>(res).norm() < 1e-8,
+             "residual at exact poses not zero");
+
+  // 2) position perturbation p_j += delta (global) -> r_p = R_j * delta
+  const Eigen::Vector3d delta(0.05, -0.03, 0.02);
+  double pose_j2[7];
+  make_block(R_j, p_j + delta, pose_j2);
+  factor(pose_i, pose_j2, res);
+  Eigen::Vector6d expected = Eigen::Vector6d::Zero();
+  expected.tail<3>() = R_j * delta;
+  expected = data.sqrt_info * expected;
+  CHECK_TRUE((Eigen::Map<Eigen::Vector6d>(res) - expected).norm() < 1e-8,
+             "position perturbation residual mismatch");
+
+  // 3) rotation perturbation R_j -> ExpSO3(phi) * R_j
+  //    r_th = R_ItoJ^T * phi  (exact: Log(R^T ExpSO3(phi) R) = R^T phi)
+  //    r_p  = ExpSO3(phi) * p_JinI - p_JinI (the position term rotates too)
+  const Eigen::Vector3d phi(0.01, -0.02, 0.015);
+  double pose_j3[7];
+  make_block(ExpSO3(phi) * R_j, p_j, pose_j3);
+  factor(pose_i, pose_j3, res);
+  expected.setZero();
+  expected.head<3>() = R_ItoJ.transpose() * phi;
+  expected.tail<3>() = ExpSO3(phi) * p_JinI - p_JinI;
+  expected = data.sqrt_info * expected;
+  CHECK_TRUE((Eigen::Map<Eigen::Vector6d>(res) - expected).norm() < 1e-8,
+             "rotation perturbation residual mismatch");
+
+  printf("[PASS] relative pose factor\n");
+  return EXIT_SUCCESS;
+}
+
 int main() {
   if (test_exp_log() != EXIT_SUCCESS)
     return EXIT_FAILURE;
@@ -460,6 +533,8 @@ int main() {
   if (test_bias_jacobians() != EXIT_SUCCESS)
     return EXIT_FAILURE;
   if (test_synthetic_vio_ba() != EXIT_SUCCESS)
+    return EXIT_FAILURE;
+  if (test_relative_pose_factor() != EXIT_SUCCESS)
     return EXIT_FAILURE;
   printf("[PASS] all backend IMU tests\n");
   return EXIT_SUCCESS;

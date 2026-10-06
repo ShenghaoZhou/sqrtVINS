@@ -34,6 +34,7 @@
 #include "types/LandmarkRepresentation.h"
 #include "utils/DataType.h"
 #include "utils/Helper.h"
+#include "utils/Profiler.h"
 #include "utils/colors.h"
 #include "utils/print.h"
 #include "utils/quat_ops.h"
@@ -148,6 +149,7 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
 
   // 3. Try to triangulate all MSCKF or new SLAM features that have measurements
   auto it1 = feature_vec.begin();
+  std::chrono::steady_clock::time_point rT2 = std::chrono::steady_clock::now();
   while (it1 != feature_vec.end()) {
     // Skip those that has been triangulated when doing iterative update
     if (is_iterative && state->features_MSCKF.find((*it1)->featid) !=
@@ -181,6 +183,7 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
   }
 
   // 4. Compute linear system for each feature, nullspace project, and reject
+  std::chrono::steady_clock::time_point rT3 = std::chrono::steady_clock::now();
   auto it2 = feature_vec.begin();
   while (it2 != feature_vec.end()) {
     // Convert our feature into our current format
@@ -371,6 +374,14 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state,
     }
     it2++;
   }
+
+  std::chrono::steady_clock::time_point rT4 = std::chrono::steady_clock::now();
+  StageProfiler::instance().add(
+      "msckf.clean", std::chrono::duration<double>(rT2 - rT0).count());
+  StageProfiler::instance().add(
+      "msckf.triangulate", std::chrono::duration<double>(rT3 - rT2).count());
+  StageProfiler::instance().add(
+      "msckf.linear_system", std::chrono::duration<double>(rT4 - rT3).count());
 
   // We have appended all features to our Hx_big, res_big
   // Delete it so we do not reuse information

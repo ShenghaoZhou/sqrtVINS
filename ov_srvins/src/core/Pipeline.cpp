@@ -38,6 +38,7 @@
 #include "SqrtEstimator.h"
 #include "VinsOptions.h"
 #include "state/State.h"
+#include "utils/Profiler.h"
 
 using namespace ov_core;
 using namespace ov_type;
@@ -48,7 +49,12 @@ bool ov_srvins::process_frame(SqrtEstimator &estimator, Frontend &frontend,
   auto state = estimator.get_state();
 
   // State propagation
-  if (!estimator.propagate(message.timestamp)) {
+  bool prop_ok;
+  {
+    SRVINS_PROFILE("pipe.propagate");
+    prop_ok = estimator.propagate(message.timestamp);
+  }
+  if (!prop_ok) {
     return false;
   }
 
@@ -76,12 +82,18 @@ bool ov_srvins::process_frame(SqrtEstimator &estimator, Frontend &frontend,
 
   // Sorting features according to rules
   std::vector<std::shared_ptr<Feature>> feats_slam, featsup_MSCKF;
-  frontend.process_measurements_rules(state, message.timestamp,
-                                      message.sensor_ids, featsup_MSCKF,
-                                      feats_slam);
+  {
+    SRVINS_PROFILE("pipe.feature_selection");
+    frontend.process_measurements_rules(state, message.timestamp,
+                                        message.sensor_ids, featsup_MSCKF,
+                                        feats_slam);
+  }
 
   // Estimator update
-  estimator.update(featsup_MSCKF, feats_slam);
+  {
+    SRVINS_PROFILE("pipe.estimator_update");
+    estimator.update(featsup_MSCKF, feats_slam);
+  }
 
   // Cleanup measurements at the pre-update marginalization time
   if (do_cleanup) {

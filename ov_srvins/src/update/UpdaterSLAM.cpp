@@ -513,8 +513,8 @@ void UpdaterSLAM::update(std::shared_ptr<State> state,
         landmark->update_fail_count++;
       }
       (*it2)->to_delete = true;
-      it2 = feature_vec.erase(it2);
       max_meas_size -= 2 * (*it2)->uvs.size();
+      it2 = feature_vec.erase(it2);
       continue;
     }
 

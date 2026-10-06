@@ -29,10 +29,12 @@
 
 #include "StateHelper.h"
 
+#include <chrono>
 #include <stdexcept>
 
 #include "state/State.h"
 #include "utils/Helper.h"
+#include "utils/Profiler.h"
 
 #include "types/Landmark.h"
 #include "utils/colors.h"
@@ -189,7 +191,11 @@ void StateHelper::marginalize(std::shared_ptr<State> state) {
     curr_id += (*var)->size();
     var++;
   }
+  auto mT0 = std::chrono::steady_clock::now();
   efficient_QR(state->U_);
+  auto mT1 = std::chrono::steady_clock::now();
+  StageProfiler::instance().add(
+      "marg.QR_only", std::chrono::duration<double>(mT1 - mT0).count());
   state->U_.conservativeResizeLike(MatX::Zero(new_state_size, new_state_size));
   state->U_ = state->U_.triangularView<Eigen::Upper>();
   state->xk_minus_x0_.conservativeResizeLike(VecX::Zero(new_state_size, 1));
@@ -289,15 +295,19 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
   HT_R_inv_res.topRows(state_size - offset) = state->HT_R_inv_res_.get();
   auto R_sqrt_inv_H_UT = state->R_sqrt_inv_H_UT_.get();
 
+  auto pT0 = std::chrono::steady_clock::now();
+
   // Reverse column first before LLT
   reverse_mat(R_sqrt_inv_H_UT);
 
   // Batch rank update with sparsity
   MatX FT_F = MatX::Zero(state_size - offset, state_size - offset);
   matrix_multiplier_ATA(R_sqrt_inv_H_UT, FT_F);
+  auto pT1 = std::chrono::steady_clock::now();
   FT_F.diagonal() += VecX::Ones(state_size - offset);
   Eigen::LLT<MatX> llt(FT_F.selfadjointView<Eigen::Upper>());
   MatX F = llt.matrixU();
+  auto pT2 = std::chrono::steady_clock::now();
 
   // Reverse column back
   reverse_mat(F);
@@ -319,10 +329,20 @@ void StateHelper::update_llt(std::shared_ptr<State> state, bool is_iterative) {
   triangular_matrix_inverse_solver(
       F.transpose(),
       state->U_.topLeftCorner(state_size - offset, state_size - offset));
+  auto pT3 = std::chrono::steady_clock::now();
   // state->_U.topLeftCorner(state_size - offset, state_size - offset) = U_temp;
   state->U_ = state->U_.triangularView<Eigen::Upper>();
   dx_xkp1_minus_x0 = state->U_.transpose().triangularView<Eigen::Lower>() *
                      (state->U_.triangularView<Eigen::Upper>() * HT_R_inv_res);
+  auto pT4 = std::chrono::steady_clock::now();
+  StageProfiler::instance().add(
+      "llt.ATA", std::chrono::duration<double>(pT1 - pT0).count());
+  StageProfiler::instance().add(
+      "llt.cholesky", std::chrono::duration<double>(pT2 - pT1).count());
+  StageProfiler::instance().add(
+      "llt.tri_inv_solve", std::chrono::duration<double>(pT3 - pT2).count());
+  StageProfiler::instance().add(
+      "llt.dx_solve", std::chrono::duration<double>(pT4 - pT3).count());
 
   if (is_iterative) {
     // For iterative SRF, we need to first downdate then update

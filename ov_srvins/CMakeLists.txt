@@ -38,6 +38,13 @@ endif()
 # Enable compile optimizations
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fomit-frame-pointer -fno-signed-zeros -fno-math-errno -funroll-loops")
 
+# Optional per-stage wall-clock profiler (SRVINS_PROFILE macros in the code
+# compile to nothing unless this is enabled)
+option(SRVINS_PROFILER "Enable per-stage timing instrumentation" OFF)
+if(SRVINS_PROFILER)
+    add_compile_definitions(SRVINS_PROFILER)
+endif()
+
 # Enable debug flags (use if you want to debug in gdb)
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -Wall -Wuninitialized -fno-omit-frame-pointer -ffp-contract=off -march=native -fno-inline-functions -fno-inline-small-functions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g3 -Wall -Wuninitialized -fno-omit-frame-pointer")

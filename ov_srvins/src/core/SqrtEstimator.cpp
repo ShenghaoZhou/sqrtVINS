@@ -36,6 +36,7 @@
 #include "update/UpdaterMSCKF.h"
 #include "update/UpdaterSLAM.h"
 #include "update/UpdaterZeroVelocity.h"
+#include "utils/Profiler.h"
 #include "utils/print.h"
 #include "utils/sensor_data.h"
 
@@ -199,13 +200,19 @@ void SqrtEstimator::update(
     std::vector<std::shared_ptr<ov_core::Feature>> &feats_slam) {
 
   // First do anchor change if we are about to lose an anchor pose
-  state->calculate_clone_poses();
-  if (state->options.do_fej) {
-    state->calculate_clone_poses_fej();
+  {
+    SRVINS_PROFILE("upd.calculate_clone_poses");
+    state->calculate_clone_poses();
+    if (state->options.do_fej) {
+      state->calculate_clone_poses_fej();
+    }
   }
 
   // Handle marginalization of old clone and features
-  handle_marginalization();
+  {
+    SRVINS_PROFILE("upd.handle_marginalization");
+    handle_marginalization();
+  }
 
   // Separate our SLAM features into new ones, and old ones
   // NOTE: this must happen AFTER marginalize_slam (in handle_marginalization)
@@ -222,18 +229,31 @@ void SqrtEstimator::update(
 
   // Perform the actual updates
   state->setup_matrix_buffer();
-  UpdaterMSCKF::update(state, featsup_MSCKF, params.msckf_options,
-                       params.featinit_options);
-
-  UpdaterSLAM::update(state, feats_slam_UPDATE, params.slam_options,
-                      params.aruco_options);
-
-  UpdaterSLAM::delayed_init(state, feats_slam_DELAYED, params.slam_options,
-                            params.aruco_options, params.featinit_options);
+  {
+    SRVINS_PROFILE("upd.msckf_update");
+    UpdaterMSCKF::update(state, featsup_MSCKF, params.msckf_options,
+                         params.featinit_options);
+  }
+  {
+    SRVINS_PROFILE("upd.slam_update");
+    UpdaterSLAM::update(state, feats_slam_UPDATE, params.slam_options,
+                        params.aruco_options);
+  }
+  {
+    SRVINS_PROFILE("upd.slam_delayed_init");
+    UpdaterSLAM::delayed_init(state, feats_slam_DELAYED, params.slam_options,
+                              params.aruco_options, params.featinit_options);
+  }
 
   // Final factorization and state update
-  StateHelper::initialize_slam_in_U(state);
-  StateHelper::update_llt(state);
+  {
+    SRVINS_PROFILE("upd.initialize_slam_in_U");
+    StateHelper::initialize_slam_in_U(state);
+  }
+  {
+    SRVINS_PROFILE("upd.update_llt");
+    StateHelper::update_llt(state);
+  }
   state->clear(true);
 }
 
@@ -249,9 +269,15 @@ void SqrtEstimator::handle_marginalization() {
   StateHelper::marginalize_slam(state);
 
   // Anchor change
-  UpdaterSLAM::change_anchors(state);
+  {
+    SRVINS_PROFILE("marg.change_anchors");
+    UpdaterSLAM::change_anchors(state);
+  }
 
   // Marginalize the oldest clone if needed
   StateHelper::marginalize_old_clone(state);
-  StateHelper::marginalize(state);
+  {
+    SRVINS_PROFILE("marg.marginalize_QR");
+    StateHelper::marginalize(state);
+  }
 }

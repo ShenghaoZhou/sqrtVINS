@@ -42,14 +42,19 @@
 #include <opencv2/opencv.hpp>
 
 #include "euroc_common.h"
+#include "image_prefetcher.h"
 #include "core/Frontend.h"
 #include "core/InitRunner.h"
 #include "core/Pipeline.h"
 #include "core/SqrtEstimator.h"
 #include "core/System.h"
 #include "core/VinsOptions.h"
+#ifdef SQRTVINS_BACKEND
+#include "backend/BackendSystem.h"
+#endif
 #include "state/State.h"
 #include "types/IMU.h"
+#include "utils/Profiler.h"
 #include "utils/print.h"
 #include "utils/yaml_parse.h"
 
@@ -92,6 +97,10 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   int processed = 0;
   auto t_start = std::chrono::steady_clock::now();
 
+  // Decode upcoming stereo pairs on a worker thread (PNG decode is the
+  // largest replay cost and otherwise serializes with tracking + update)
+  StereoImagePrefetcher prefetcher(opt.dataset_path, cam_data);
+
   for (const auto &cam : cam_data) {
     double curr_cam_time = cam.timestamp;
 
@@ -107,17 +116,21 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
         msgs[i - imu_idx].wm = imu_data.at(i).wm.cast<DataType>();
         msgs[i - imu_idx].am = imu_data.at(i).am.cast<DataType>();
       }
-      estimator->feed_imu_batch(msgs);
+      {
+        SRVINS_PROFILE("drv.feed_imu_batch");
+        estimator->feed_imu_batch(msgs);
+      }
       imu_idx = k;
     }
 
-    // Load stereo images
-    cv::Mat img0 = cv::imread(opt.dataset_path + "/mav0/cam0/data/" +
-                                  cam.filename_cam0,
-                              cv::IMREAD_GRAYSCALE);
-    cv::Mat img1 = cv::imread(opt.dataset_path + "/mav0/cam1/data/" +
-                                  cam.filename_cam1,
-                              cv::IMREAD_GRAYSCALE);
+    // Fetch the next prefetched stereo pair (decoded off the critical path)
+    cv::Mat img0, img1;
+    {
+      SRVINS_PROFILE("drv.imread");
+      StereoImagePrefetcher::Frame frame = prefetcher.next();
+      img0 = frame.img0;
+      img1 = frame.img1;
+    }
     if (img0.empty() || img1.empty()) {
       processed++;
       continue;
@@ -132,7 +145,10 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
       zero_mask = cv::Mat::zeros(img0.rows, img0.cols, CV_8UC1);
     message.masks.push_back(zero_mask);
     message.masks.push_back(zero_mask.clone());
-    frontend->feed_camera(message);
+    {
+      SRVINS_PROFILE("drv.feed_camera_track");
+      frontend->feed_camera(message);
+    }
 
     auto state = estimator->get_state();
 
@@ -154,7 +170,23 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
     }
 
     // Propagation, feature selection, update, and database cleanup
-    process_frame(*estimator, *frontend, message);
+    {
+      SRVINS_PROFILE("drv.process_frame");
+#ifdef SQRTVINS_BACKEND
+      // snapshot observations BEFORE the update consumes tracks from the db
+      if (sys.backend) {
+        sys.backend->record_observations(
+            curr_cam_time,
+            *frontend->get_trackFEATS()->get_feature_database());
+      }
+#endif
+      process_frame(*estimator, *frontend, message);
+#ifdef SQRTVINS_BACKEND
+      if (sys.backend) {
+        sys.backend->record_pose(*estimator->get_state());
+      }
+#endif
+    }
 
     // Record state (OpenVINS estimate format: p_IinG and JPL q_GtoI)
     state = estimator->get_state();
@@ -182,5 +214,23 @@ int run_euroc_sqrt(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   outfile.close();
   PRINT_INFO("done: wrote %d frames to %s\n", processed,
              opt.output_path.c_str());
+
+#ifdef SQRTVINS_BACKEND
+  // Offline bundle adjustment over the recorded keyframes (Phase 1)
+  if (sys.backend) {
+    const std::string ba_path = opt.output_path + ".ba";
+    BackendSummary summary =
+        sys.backend->run_offline_ba(*estimator->get_state(), ba_path);
+    PRINT_INFO(
+        "[BACKEND]: keyframes=%d points=%d obs=%d solved=%d reproj "
+        "before=%.3f after=%.3f final=%.3f px (pruned %d), trajectory -> %s\n",
+        summary.num_keyframes, summary.num_points, summary.num_observations,
+        (int)summary.solved, summary.mean_reproj_error_before,
+        summary.mean_reproj_error_after, summary.mean_reproj_error_final,
+        summary.num_pruned_points, ba_path.c_str());
+  }
+#endif
+
+  StageProfiler::instance().report();
   return EXIT_SUCCESS;
 }

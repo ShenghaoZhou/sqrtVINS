@@ -31,6 +31,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "euroc_common.h"
+#include "image_prefetcher.h"
 #include "core/VioManager.h"
 #include "core/VioManagerOptions.h"
 #include "state/State.h"
@@ -69,6 +70,10 @@ int run_euroc_full(const EurocRunOptions &opt, const std::vector<ImuReading> &im
   int processed = 0;
   auto t_start = std::chrono::steady_clock::now();
 
+  // Decode upcoming stereo pairs on a worker thread (PNG decode is the
+  // largest replay cost and otherwise serializes with tracking + update)
+  StereoImagePrefetcher prefetcher(opt.dataset_path, cam_data);
+
   for (const auto &cam : cam_data) {
     double curr_cam_time = cam.timestamp;
 
@@ -96,11 +101,10 @@ int run_euroc_full(const EurocRunOptions &opt, const std::vector<ImuReading> &im
       imu_idx++;
     }
 
-    // Load stereo images
-    cv::Mat img0 = cv::imread(opt.dataset_path + "/mav0/cam0/data/" + cam.filename_cam0,
-                              cv::IMREAD_GRAYSCALE);
-    cv::Mat img1 = cv::imread(opt.dataset_path + "/mav0/cam1/data/" + cam.filename_cam1,
-                              cv::IMREAD_GRAYSCALE);
+    // Fetch the next prefetched stereo pair (decoded off the critical path)
+    StereoImagePrefetcher::Frame frame = prefetcher.next();
+    cv::Mat img0 = frame.img0;
+    cv::Mat img1 = frame.img1;
     if (img0.empty() || img1.empty()) {
       processed++;
       continue;

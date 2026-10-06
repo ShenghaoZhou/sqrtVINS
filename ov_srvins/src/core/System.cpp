@@ -29,6 +29,9 @@
 #include "VinsOptions.h"
 #include "initializer/InertialInitializer.h"
 #include "track/TrackBase.h"
+#ifdef SQRTVINS_BACKEND
+#include "backend/BackendSystem.h"
+#endif
 
 using namespace ov_srvins;
 
@@ -46,5 +49,10 @@ System System::create(const VinsOptions &params) {
       params.msckf_options, params.slam_options, params.featinit_options);
   sys.init_runner = std::make_shared<InitRunner>(params, sys.estimator,
                                                  sys.frontend, sys.initializer);
+#ifdef SQRTVINS_BACKEND
+  if (params.backend_options.enabled) {
+    sys.backend = std::make_shared<BackendSystem>(params.backend_options);
+  }
+#endif
   return sys;
 }

@@ -16,4 +16,6 @@ __pycache__
 
 # standalone reference checkout + vendored Ocean SDK (kept out of repo)
 open_vins_ori/
-third_party/
+third_party/*
+# ...except our minimal colmap build glue
+!third_party/colmap-lite/

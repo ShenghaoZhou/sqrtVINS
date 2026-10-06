@@ -33,6 +33,7 @@ class Frontend;
 class InertialInitializer;
 class InitRunner;
 class VinsOptions;
+class BackendSystem;
 
 /**
  * @brief Bundle of the fully wired pipeline components.
@@ -48,6 +49,10 @@ struct System {
   std::shared_ptr<Frontend> frontend;
   std::shared_ptr<InertialInitializer> initializer;
   std::shared_ptr<InitRunner> init_runner;
+
+  /// Bundle-adjustment backend (null unless
+  /// VinsOptions::backend_options.enabled). Phase 1: offline BA recorder.
+  std::shared_ptr<BackendSystem> backend;
 
   /// Construct and wire all components from the system parameters
   static System create(const VinsOptions &params);

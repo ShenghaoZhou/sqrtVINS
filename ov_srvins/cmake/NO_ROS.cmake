@@ -50,6 +50,11 @@ list(APPEND thirdparty_libraries ${OCEAN_LIBRARIES})
 message(STATUS "LINKING TO OV_CORE LIBRARY....")
 list(APPEND thirdparty_libraries ov_core_lib)
 
+# Optional colmap/Ceres bundle-adjustment backend (Phase 1: offline BA)
+if(SQRTVINS_ENABLE_BACKEND)
+    list(APPEND thirdparty_libraries colmap_lite)
+endif()
+
 
 
 # #################################################
@@ -85,6 +90,13 @@ list(APPEND LIBRARY_SOURCES
         src/utils/EigenMatrixBuffer.cpp
         )
 
+if(SQRTVINS_ENABLE_BACKEND)
+    list(APPEND LIBRARY_SOURCES
+        src/backend/ColmapMapAdapter.cpp
+        src/backend/BackendSystem.cpp
+        )
+endif()
+
 
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_srvins_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
@@ -105,6 +117,14 @@ target_include_directories(run_euroc PRIVATE ${CMAKE_SOURCE_DIR}/common)
 
 add_library(isoc23_shim STATIC ${CMAKE_SOURCE_DIR}/common/isoc23_shim.c)
 target_link_libraries(ov_srvins_lib ${thirdparty_libraries})
+
+if(SQRTVINS_ENABLE_BACKEND)
+    # PUBLIC: drivers (euroc_sqrt_part) compile backend call-sites too
+    target_compile_definitions(ov_srvins_lib PUBLIC SQRTVINS_BACKEND)
+    add_executable(test_backend_adapter src/backend/test_backend_adapter.cpp)
+    target_link_libraries(test_backend_adapter ov_srvins_lib colmap_lite)
+    target_include_directories(test_backend_adapter PRIVATE src/)
+endif()
 target_include_directories(ov_srvins_lib PUBLIC src/)
 install(TARGETS ov_srvins_lib
         ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

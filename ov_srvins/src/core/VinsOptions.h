@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 
+#include "backend/BackendOptions.h"
 #include "state/State.h"
 
 #include "state/StateOptions.h"
@@ -113,7 +114,14 @@ struct VinsOptions {
   void print_and_load_trackers(
       std::shared_ptr<ov_core::YamlParser> parser = nullptr);
 
-
+  /**
+   * @brief This function will load and print the bundle-adjustment backend
+   * parameters (offline BA recorder + solver settings).
+   *
+   * @param parser If not null, this parser will be used to load our parameters
+   */
+  void print_and_load_backend(
+      std::shared_ptr<ov_core::YamlParser> parser = nullptr);
 
   // ESTIMATOR ===============================
   /// Core state options (e.g. number of cameras, use fej, stereo, what
@@ -123,6 +131,9 @@ struct VinsOptions {
   /// Our state initialization options (e.g. window size, num features, if we
   /// should get the calibration)
   ov_srvins::InertialInitializerOptions init_options;
+
+  /// Bundle-adjustment backend options (offline BA recorder + solver)
+  BackendOptions backend_options;
 
   /// Delay, in seconds, that we should wait from init before we start
   /// estimating SLAM features

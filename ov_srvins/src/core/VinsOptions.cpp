@@ -63,6 +63,36 @@ void VinsOptions::print_and_load(
   print_and_load_noise(parser);
   print_and_load_state(parser);
   print_and_load_trackers(parser);
+  print_and_load_backend(parser);
+}
+
+void VinsOptions::print_and_load_backend(
+    std::shared_ptr<ov_core::YamlParser> parser) {
+  PRINT_DEBUG("BACKEND PARAMETERS:\n");
+  if (parser != nullptr) {
+    parser->parse_config("backend_enabled", backend_options.enabled);
+    parser->parse_config("backend_keyframe_stride",
+                         backend_options.keyframe_stride);
+    parser->parse_config("backend_min_track_length",
+                         backend_options.min_track_length);
+    parser->parse_config("backend_max_triang_error",
+                         backend_options.max_triang_error_px);
+    parser->parse_config("backend_max_reproj_error",
+                         backend_options.max_reproj_error_px);
+    parser->parse_config("backend_refine_after_pruning",
+                         backend_options.refine_after_pruning);
+    parser->parse_config("backend_max_num_iterations",
+                         backend_options.max_num_iterations);
+    parser->parse_config("backend_num_threads", backend_options.num_threads);
+    parser->parse_config("backend_loss_scale", backend_options.loss_scale);
+    parser->parse_config("backend_print_summary",
+                         backend_options.print_summary);
+  }
+  PRINT_DEBUG("  - backend enabled: %d\n", (int)backend_options.enabled);
+  PRINT_DEBUG("  - backend keyframe stride: %d\n",
+              backend_options.keyframe_stride);
+  PRINT_DEBUG("  - backend min track length: %d\n",
+              (int)backend_options.min_track_length);
 }
 
 void VinsOptions::print_and_load_estimator(

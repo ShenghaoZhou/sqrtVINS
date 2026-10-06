@@ -9,6 +9,9 @@
 #include "core/InitRunner.h"
 #include "core/Pipeline.h"
 #include "core/System.h"
+#ifdef SQRTVINS_BACKEND
+#include "backend/BackendSystem.h"
+#endif
 #include "state/Propagator.h"
 #include "state/State.h"
 #include "utils/sensor_data.h"
@@ -71,11 +74,33 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readwrite("init_dyn_use", &InertialInitializerOptions::init_dyn_use)
         .def_readwrite("init_async", &InertialInitializerOptions::init_async);
 
+#ifdef SQRTVINS_BACKEND
+    py::class_<BackendOptions>(m, "BackendOptions")
+        .def(py::init<>())
+        .def_readwrite("enabled", &BackendOptions::enabled)
+        .def_readwrite("keyframe_stride", &BackendOptions::keyframe_stride)
+        .def_readwrite("min_track_length", &BackendOptions::min_track_length)
+        .def_readwrite("max_triang_error_px",
+                       &BackendOptions::max_triang_error_px)
+        .def_readwrite("max_reproj_error_px",
+                       &BackendOptions::max_reproj_error_px)
+        .def_readwrite("refine_after_pruning",
+                       &BackendOptions::refine_after_pruning)
+        .def_readwrite("max_num_iterations",
+                       &BackendOptions::max_num_iterations)
+        .def_readwrite("num_threads", &BackendOptions::num_threads)
+        .def_readwrite("loss_scale", &BackendOptions::loss_scale)
+        .def_readwrite("print_summary", &BackendOptions::print_summary);
+
+#endif
     py::class_<VinsOptions>(m, "VinsOptions")
         .def(py::init<>())
         .def("print_and_load", &VinsOptions::print_and_load, py::arg("parser") = nullptr)
         .def_readwrite("state_options", &VinsOptions::state_options)
         .def_readwrite("init_options", &VinsOptions::init_options)
+#ifdef SQRTVINS_BACKEND
+        .def_readwrite("backend_options", &VinsOptions::backend_options)
+#endif
         .def_readwrite("imu_noises", &VinsOptions::imu_noises)
         .def_readwrite("msckf_options", &VinsOptions::msckf_options)
         .def_readwrite("slam_options", &VinsOptions::slam_options)
@@ -217,7 +242,34 @@ PYBIND11_MODULE(ov_srvins_py, m) {
         .def_readonly("frontend", &System::frontend)
         .def_readonly("initializer", &System::initializer)
         .def_readonly("init_runner", &System::init_runner)
+#ifdef SQRTVINS_BACKEND
+        .def_readonly("backend", &System::backend)
+#endif
         .def_static("create", &System::create, py::arg("params"));
+
+#ifdef SQRTVINS_BACKEND
+    // Bundle-adjustment backend (Phase 1: offline BA recorder + solver)
+    py::class_<BackendSummary>(m, "BackendSummary")
+        .def_readonly("solved", &BackendSummary::solved)
+        .def_readonly("num_keyframes", &BackendSummary::num_keyframes)
+        .def_readonly("num_images", &BackendSummary::num_images)
+        .def_readonly("num_points", &BackendSummary::num_points)
+        .def_readonly("num_observations", &BackendSummary::num_observations)
+        .def_readonly("mean_reproj_error_before",
+                      &BackendSummary::mean_reproj_error_before)
+        .def_readonly("mean_reproj_error_after",
+                      &BackendSummary::mean_reproj_error_after)
+        .def_readonly("mean_reproj_error_final",
+                      &BackendSummary::mean_reproj_error_final)
+        .def_readonly("num_pruned_points", &BackendSummary::num_pruned_points);
+
+    py::class_<BackendSystem, std::shared_ptr<BackendSystem>>(m,
+                                                              "BackendSystem")
+        .def("record_observations", &BackendSystem::record_observations)
+        .def("record_pose", &BackendSystem::record_pose)
+        .def("num_keyframes", &BackendSystem::num_keyframes)
+        .def("run_offline_ba", &BackendSystem::run_offline_ba);
+#endif
 
     // Bind InertialInitializer
     py::class_<InertialInitializer, std::shared_ptr<InertialInitializer>>(m, "InertialInitializer")

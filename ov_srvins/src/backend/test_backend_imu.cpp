@@ -29,6 +29,8 @@
  *  3. First-order bias-Jacobian correction vs re-integration
  *  4. Synthetic visual-inertial BA: stereo rig + IMU factors injected into
  *     the colmap problem must recover ground truth from perturbed init
+ *  5. Relative-pose (loop) and absolute-pose (boundary prior) factor
+ *     residual conventions
  */
 
 #include <cstdio>
@@ -38,6 +40,7 @@
 #include "backend/BackendSystem.h"
 #include "backend/ImuFactor.h"
 #include "backend/ImuPreintegration.h"
+#include "backend/PosePriorFactor.h"
 #include "backend/RelativePoseFactor.h"
 
 #include "colmap/scene/reconstruction.h"
@@ -449,7 +452,50 @@ static int test_synthetic_vio_ba() {
   CHECK_TRUE(max_bg_err < 2e-3, "gyro bias far from ground truth");
   CHECK_TRUE(max_ba_err < 0.05, "accel bias far from ground truth");
 
-  printf("[PASS] synthetic visual-inertial BA\n");
+  // --- windowed-style re-solve with soft boundary priors -------------------
+  // Centers are the current refined values of frame 1 (as the online worker
+  // does after warm starting); the pose prior replaces the constant anchor.
+  BoundaryPrior prior;
+  prior.pose_enabled = true;
+  {
+    const auto &f1 = recon.Frame(1).RigFromWorld();
+    const Eigen::Matrix3d R1 = f1.rotation().toRotationMatrix();
+    prior.R_GtoI = R1;
+    prior.p_IinG = -(R1.transpose() * f1.translation());
+    prior.sigma_ori = 0.02;
+    prior.sigma_pos = 0.05;
+  }
+  prior.sb_enabled = true;
+  prior.sb = Eigen::Map<const Eigen::Matrix<double, 9, 1>>(imu->sb[0].data());
+  prior.sigma_vel = 0.5;
+  prior.sigma_bg = 0.05;
+  prior.sigma_ba = 0.2;
+
+  BackendSummary summary_prior = backend.solve_and_export(
+      recon, timestamps, "", imu.get(), -1, 0, true, &prior);
+  CHECK_TRUE(summary_prior.solved, "boundary-prior solve failed");
+
+  double max_trans_err_prior = 0;
+  for (size_t i = 0; i < kNumFrames; i++) {
+    const auto &refined = recon.Frame(i + 1).RigFromWorld();
+    const Eigen::Vector3d p_ref =
+        -(refined.rotation().toRotationMatrix().transpose() *
+          refined.translation());
+    max_trans_err_prior = std::max(
+        max_trans_err_prior, (motion.p(timestamps[i]) - p_ref).norm());
+  }
+  CHECK_TRUE(max_trans_err_prior < 0.01,
+             "boundary-prior solve degraded the poses");
+  // soft gauge: frame 1 must stay within a few sigmas of its prior center
+  {
+    const auto &f1 = recon.Frame(1).RigFromWorld();
+    const Eigen::Vector3d p1 =
+        -(f1.rotation().toRotationMatrix().transpose() * f1.translation());
+    CHECK_TRUE((p1 - prior.p_IinG).norm() < 3.0 * prior.sigma_pos,
+               "frame 1 drifted from its pose prior");
+  }
+
+  printf("[PASS] synthetic visual-inertial BA (+ boundary priors)\n");
   return EXIT_SUCCESS;
 }
 
@@ -525,6 +571,66 @@ static int test_relative_pose_factor() {
   return EXIT_SUCCESS;
 }
 
+static int test_pose_prior_factor() {
+  const TrueMotion motion;
+  const double t_k = 1.3;
+
+  // prior pose in clone convention (R_GtoI, p_IinG)
+  const Eigen::Matrix3d R_k = motion.C(t_k).transpose();
+  const Eigen::Vector3d p_k = motion.p(t_k);
+  const PosePriorFactorData data =
+      PosePriorFactorData::FromPose(R_k, p_k, 0.01, 0.1);
+  PosePriorFactor factor(data);
+
+  // colmap pose block [qx qy qz qw tx ty tz] with t = -R * p
+  auto make_block = [](const Eigen::Matrix3d &R, const Eigen::Vector3d &p,
+                       double *pose) {
+    const Eigen::Quaterniond q(R);
+    pose[0] = q.x();
+    pose[1] = q.y();
+    pose[2] = q.z();
+    pose[3] = q.w();
+    const Eigen::Vector3d t = -R * p;
+    pose[4] = t(0);
+    pose[5] = t(1);
+    pose[6] = t(2);
+  };
+  double pose[7];
+  make_block(R_k, p_k, pose);
+
+  // 1) residual at the prior pose is zero
+  double res[6];
+  factor(pose, res);
+  CHECK_TRUE(Eigen::Map<Eigen::Vector6d>(res).norm() < 1e-8,
+             "residual at prior pose not zero");
+
+  // 2) position perturbation p += delta (global) -> r_p = delta
+  const Eigen::Vector3d delta(0.05, -0.03, 0.02);
+  double pose2[7];
+  make_block(R_k, p_k + delta, pose2);
+  factor(pose2, res);
+  Eigen::Vector6d expected = Eigen::Vector6d::Zero();
+  expected.tail<3>() = delta;
+  expected = data.sqrt_info * expected;
+  CHECK_TRUE((Eigen::Map<Eigen::Vector6d>(res) - expected).norm() < 1e-8,
+             "position perturbation residual mismatch");
+
+  // 3) rotation perturbation R -> ExpSO3(phi) * R (p_IinG unchanged)
+  //    r_th = Log(R^T ExpSO3(phi) R) = R^T phi exactly, r_p = 0
+  const Eigen::Vector3d phi(0.01, -0.02, 0.015);
+  double pose3[7];
+  make_block(ExpSO3(phi) * R_k, p_k, pose3);
+  factor(pose3, res);
+  expected.setZero();
+  expected.head<3>() = R_k.transpose() * phi;
+  expected = data.sqrt_info * expected;
+  CHECK_TRUE((Eigen::Map<Eigen::Vector6d>(res) - expected).norm() < 1e-8,
+             "rotation perturbation residual mismatch");
+
+  printf("[PASS] pose prior factor\n");
+  return EXIT_SUCCESS;
+}
+
 int main() {
   if (test_exp_log() != EXIT_SUCCESS)
     return EXIT_FAILURE;
@@ -535,6 +641,8 @@ int main() {
   if (test_synthetic_vio_ba() != EXIT_SUCCESS)
     return EXIT_FAILURE;
   if (test_relative_pose_factor() != EXIT_SUCCESS)
+    return EXIT_FAILURE;
+  if (test_pose_prior_factor() != EXIT_SUCCESS)
     return EXIT_FAILURE;
   printf("[PASS] all backend IMU tests\n");
   return EXIT_SUCCESS;

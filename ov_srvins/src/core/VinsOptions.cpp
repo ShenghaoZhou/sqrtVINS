@@ -92,6 +92,18 @@ void VinsOptions::print_and_load_backend(
                          backend_options.window_max_iterations);
     parser->parse_config("backend_window_max_solver_time",
                          backend_options.window_max_solver_time);
+    parser->parse_config("backend_window_warm_start",
+                         backend_options.window_warm_start);
+    parser->parse_config("backend_window_prior_sigma_pos",
+                         backend_options.window_prior_sigma_pos);
+    parser->parse_config("backend_window_prior_sigma_ori",
+                         backend_options.window_prior_sigma_ori);
+    parser->parse_config("backend_window_prior_sigma_vel",
+                         backend_options.window_prior_sigma_vel);
+    parser->parse_config("backend_window_prior_sigma_bg",
+                         backend_options.window_prior_sigma_bg);
+    parser->parse_config("backend_window_prior_sigma_ba",
+                         backend_options.window_prior_sigma_ba);
     parser->parse_config("backend_feedback_enabled",
                          backend_options.feedback_enabled);
     parser->parse_config("backend_feedback_sigma_pos",

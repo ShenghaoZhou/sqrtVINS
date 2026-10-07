@@ -52,10 +52,34 @@ recreated on the prune-and-re-solve path.
 
 `BackendSystem::online_worker` runs a fixed-lag window: `backend_window_size`
 keyframes (default 15), one solve every `backend_window_solve_stride` keyframes
-(default 2), oldest window keyframe held constant as the gauge, and
-`backend_window_max_iterations` / `backend_window_max_solver_time` budgets
-(15 iterations / 50 ms). Refined poses are published through
-`get_refined_poses()` keyed by keyframe camera timestamps.
+(default 2), and `backend_window_max_iterations` /
+`backend_window_max_solver_time` budgets (15 iterations / 50 ms). Refined
+poses are published through `get_refined_poses()` keyed by keyframe camera
+timestamps.
+
+Two mechanisms turn the plain fixed-lag window into a smoother seam:
+
+* **Warm start** (`backend_window_warm_start`, default on): after each
+  successful solve the refined poses and `[v, bg, ba]` blocks are written
+  back into the recorded keyframes, so the next solve starts from the
+  previous solution on the 13/15-keyframe overlap instead of the filter
+  snapshots. Without this the iteration budget is spent re-converging every
+  solve. The write-back matches keyframes by timestamp (reverse two-pointer
+  walk under `record_mtx_`); offline BA also benefits since it initializes
+  from the same stored poses.
+* **Soft boundary priors** (`backend_window_prior_sigma_*`): the oldest
+  window keyframe is **not** held constant. Instead a 6-dof pose prior
+  (`PosePriorFactor`, whitened, same `[theta, p]` convention as `ImuFactor`)
+  is centered on the keyframe's current value, plus a diagonal 9-dim prior
+  (`SbPriorFactor`) on its `[v, bg, ba]` block. Because warm starting
+  makes the prior center the *previous solve's refined* pose, the gauge
+  follows the backend map rather than the filter snapshot — loop-closure
+  factors (3c) can move the window seam, which a constant anchor would
+  forbid. Setting `backend_window_prior_sigma_pos/ori <= 0` restores the
+  constant anchor; the velocity/bias prior disables per-sigma. The priors
+  apply to the windowed solve only; offline BA keeps the constant anchor.
+
+### Phase 3a — pose feedback
 
 ### Phase 3a — pose feedback
 
@@ -196,6 +220,12 @@ correction on the landmark itself is what would actually be needed.
 | `backend_window_solve_stride` | `2` | solve every N keyframes |
 | `backend_window_max_iterations` | `15` | per-solve iteration budget |
 | `backend_window_max_solver_time` | `0.05` | per-solve wall-clock budget (s) |
+| `backend_window_warm_start` | `true` | write refined values back for the next solve's init |
+| `backend_window_prior_sigma_pos` | `0.05` | boundary pose prior sigma (m); ≤0 → constant anchor |
+| `backend_window_prior_sigma_ori` | `0.02` | boundary pose prior sigma (rad); ≤0 → constant anchor |
+| `backend_window_prior_sigma_vel` | `0.5` | boundary velocity prior sigma (m/s); ≤0 disables |
+| `backend_window_prior_sigma_bg` | `0.05` | boundary gyro-bias prior sigma (rad/s); ≤0 disables |
+| `backend_window_prior_sigma_ba` | `0.2` | boundary accel-bias prior sigma (m/s²); ≤0 disables |
 | `backend_feedback_enabled` | `false` | feed refined poses back into the filter |
 | `backend_feedback_sigma_pos` | `0.05` | feedback position sigma (m) |
 | `backend_feedback_sigma_ori` | `0.02` | feedback orientation sigma (rad) |
@@ -221,6 +251,37 @@ EuRoC ATE RMSE, Sim(3)-aligned (`eval_backend_ate.py`,
 3a improves both sequences. Online windowed BA on V1_01 reaches 0.0937 m
 (250 solves, mean 58 ms, max 63 ms against the 2-keyframe cadence). Final
 reprojection error is ~0.7–0.9 px.
+
+### Warm start + boundary priors: A/B (2026-10-07)
+
+Online windowed BA with 3a feedback (σ 0.05/0.02), filter / online-BA ATE
+RMSE [m]. "old" = constant anchor + no warm start (prior sigmas ≤ 0,
+`backend_window_warm_start: false`); "warm start" / "warm + priors" toggle
+the corresponding window keys:
+
+| Sequence | old | warm start | warm + priors | warm, no feedback |
+|---|---|---|---|---|
+| V1_01_easy | .0950 / .0957 | .0943 / .0962 | **.0915 / .0888** | .0933 / .1043 |
+| V2_01_easy | **.0998** / .1004 | .1100 / .0951 | .1117 / .1208 | .1013 / **.0820** |
+| V2_02_medium | **.1728 / .1744** | .2003 / .1887 | .1786 / .1902 | .1774 / .1795 |
+
+Takeaways:
+
+* Warm start is a real BA-quality improvement where the window solves well
+  (V2_01 online .1004 → .0820 without feedback; V1_01 online .0957 → .0888
+  with priors + feedback).
+* **3a feedback at the tuned σ becomes harmful under warm start on the V2
+  sequences** (V2_01 filter .1013 → .1100, V2_02 filter .1774 → .2003). The
+  feedback σ was tuned when every solve re-anchored to the filter trajectory;
+  a warm-started window is far more filter-independent, so the same σ double
+  counts. Re-tune `backend_feedback_sigma_*` (or make it adaptive to the
+  window cost) before enabling feedback with warm start.
+* The soft pose prior alone is sequence-dependent (helps V1_01, hurts V2_01
+  under feedback); with loops absent its only effect is gauge freedom. Its
+  motivation is the loop-closure case (3c), which these runs do not exercise.
+
+`backend_online_enabled` and `backend_feedback_enabled` remain off by
+default, so the shipped configuration is unaffected.
 
 ## Build and test
 

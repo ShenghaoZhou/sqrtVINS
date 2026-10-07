@@ -178,6 +178,15 @@ backend_window_size: 15
 backend_window_solve_stride: 2
 backend_window_max_iterations: 15
 backend_window_max_solver_time: 0.05
+# warm-start each windowed solve from the previous solve's refined values
+backend_window_warm_start: true
+# soft boundary priors on the oldest window keyframe (<= 0: pose prior off ->
+# constant anchor; vel/bg/ba <= 0 disables the velocity/bias prior)
+backend_window_prior_sigma_pos: 0.05
+backend_window_prior_sigma_ori: 0.02
+backend_window_prior_sigma_vel: 0.5
+backend_window_prior_sigma_bg: 0.05
+backend_window_prior_sigma_ba: 0.2
 # Phase 3: soft pose feedback from the windowed BA into the filter
 backend_feedback_enabled: false
 backend_feedback_sigma_pos: 0.05

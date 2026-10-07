@@ -86,6 +86,26 @@ struct BackendOptions {
   /// Wall-clock budget per windowed solve [s] (0 = no limit)
   double window_max_solver_time = 0.05;
 
+  /// Write each windowed solve's refined poses and velocity/bias blocks back
+  /// into the recorded keyframes, so the next solve starts from the previous
+  /// solution on the overlap instead of the filter snapshots
+  bool window_warm_start = true;
+
+  /// Soft gauge prior on the oldest window keyframe pose [m] / [rad]. When
+  /// both are positive the constant anchor is replaced by a prior factor
+  /// centered on the keyframe's current value (the previous solve's refined
+  /// pose once warm starting has run), so loop closures and past refinements
+  /// can move the window seam. <= 0 restores the constant anchor.
+  double window_prior_sigma_pos = 0.05;
+  double window_prior_sigma_ori = 0.02;
+
+  /// Prior on the oldest window keyframe's [v, bg, ba] block, centered on its
+  /// current value [m/s, rad/s, m/s^2]. Anchors the leading edge of the IMU
+  /// factor chain so biases cannot drift solve-to-solve. <= 0 disables each.
+  double window_prior_sigma_vel = 0.5;
+  double window_prior_sigma_bg = 0.05;
+  double window_prior_sigma_ba = 0.2;
+
   /// --- filter feedback (Phase 3) -------------------------------------------
 
   /// Feed the refined window poses back into the filter as soft pose

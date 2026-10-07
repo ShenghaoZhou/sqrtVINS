@@ -87,6 +87,26 @@ struct ImuConstraints {
   std::vector<ImuFactorData> factors;
 };
 
+/// Soft boundary priors for the windowed solve (frame id 1 = the oldest
+/// keyframe in the window). When pose_enabled, a 6-dof pose prior replaces
+/// the constant gauge anchor; when sb_enabled, a diagonal 9-dim prior anchors
+/// the first velocity/bias block. Centers are the keyframe's current values —
+/// the filter snapshot on the first solve, the previous solve's refined
+/// values once warm starting (BackendOptions::window_warm_start) has run.
+struct BoundaryPrior {
+  bool pose_enabled = false;
+  Eigen::Matrix3d R_GtoI = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d p_IinG = Eigen::Vector3d::Zero();
+  double sigma_ori = 0.02;
+  double sigma_pos = 0.05;
+  bool sb_enabled = false;
+  /// [v_IinG(3) bg(3) ba(3)], matching ImuConstraints::sb
+  Eigen::Matrix<double, 9, 1> sb = Eigen::Matrix<double, 9, 1>::Zero();
+  double sigma_vel = 0.5;
+  double sigma_bg = 0.05;
+  double sigma_ba = 0.2;
+};
+
 /**
  * @brief Bundle-adjustment backend (offline: vision + IMU).
  *
@@ -209,14 +229,18 @@ public:
   /// Ceres problem before each solve (it must outlive the call).
   /// max_iterations/max_solver_time override the option budgets when
   /// positive (used by the online worker); prune=false skips outlier
-  /// pruning + re-solve.
+  /// pruning + re-solve. If `prior` is given, its pose prior replaces the
+  /// constant gauge anchor on frame 1 and its velocity/bias prior anchors
+  /// imu->sb[0] (used by the online worker; offline BA keeps the constant
+  /// anchor).
   BackendSummary solve_and_export(colmap::Reconstruction &recon,
                                   const std::vector<double> &frame_timestamps,
                                   const std::string &traj_out_path,
                                   ImuConstraints *imu = nullptr,
                                   int max_iterations = -1,
                                   double max_solver_time = 0,
-                                  bool prune = true);
+                                  bool prune = true,
+                                  const BoundaryPrior *prior = nullptr);
 
   /// Build the IMU constraints over a set of keyframes (must be the same
   /// keyframes/ordering that enter the reconstruction). Returns nullptr if
@@ -256,6 +280,14 @@ private:
   void inject_loop_factors(colmap::CeresBundleAdjuster &adjuster,
                            colmap::Reconstruction &recon,
                            const std::vector<double> &frame_timestamps);
+
+  /// Inject the soft boundary priors (pose prior on frame 1, velocity/bias
+  /// prior on imu->sb[0]) into the adjuster's Ceres problem. Called by
+  /// solve_and_export when a BoundaryPrior is given.
+  void inject_boundary_priors(colmap::CeresBundleAdjuster &adjuster,
+                              colmap::Reconstruction &recon,
+                              ImuConstraints *imu,
+                              const BoundaryPrior &prior);
 
   /// Online worker: repeatedly solves the sliding window of the newest
   /// BackendOptions::window_size keyframes every window_solve_stride new

@@ -33,6 +33,7 @@
 #include "backend/ColmapMapAdapter.h"
 #include "backend/ImuFactor.h"
 #include "backend/ImuPreintegration.h"
+#include "backend/PosePriorFactor.h"
 #include "cam/CamBase.h"
 #include "feat/Feature.h"
 #include "feat/FeatureDatabase.h"
@@ -506,10 +507,29 @@ void BackendSystem::inject_loop_factors(
   }
 }
 
+void BackendSystem::inject_boundary_priors(
+    colmap::CeresBundleAdjuster &adjuster, colmap::Reconstruction &recon,
+    ImuConstraints *imu, const BoundaryPrior &prior) {
+  auto &problem = adjuster.Problem();
+  if (prior.pose_enabled && recon.ExistsFrame(1)) {
+    auto *cost = new ceres::AutoDiffCostFunction<PosePriorFactor, 6, 7>(
+        new PosePriorFactor(PosePriorFactorData::FromPose(
+            prior.R_GtoI, prior.p_IinG, prior.sigma_ori, prior.sigma_pos)));
+    problem->AddResidualBlock(cost, nullptr,
+                              recon.Frame(1).RigFromWorld().params.data());
+  }
+  if (prior.sb_enabled && imu != nullptr && !imu->sb.empty()) {
+    auto *cost = new ceres::AutoDiffCostFunction<SbPriorFactor, 9, 9>(
+        new SbPriorFactor(prior.sb, prior.sigma_vel, prior.sigma_bg,
+                          prior.sigma_ba));
+    problem->AddResidualBlock(cost, nullptr, imu->sb[0].data());
+  }
+}
+
 BackendSummary BackendSystem::solve_and_export(
     colmap::Reconstruction &recon, const std::vector<double> &frame_timestamps,
     const std::string &traj_out_path, ImuConstraints *imu, int max_iterations,
-    double max_solver_time, bool prune) {
+    double max_solver_time, bool prune, const BoundaryPrior *prior) {
   BackendSummary summary;
   summary.num_keyframes = static_cast<int>(frame_timestamps.size());
   summary.num_images = static_cast<int>(recon.NumImages());
@@ -533,8 +553,11 @@ BackendSummary BackendSystem::solve_and_export(
     config.SetConstantSensorFromRigPose(
         colmap::sensor_t(colmap::SensorType::CAMERA, cam_pair.first));
   }
-  // anchor the gauge to the filter frame: oldest keyframe pose constant
-  config.SetConstantRigFromWorldPose(1);
+  // anchor the gauge to the filter frame: oldest keyframe pose constant,
+  // unless a soft pose prior replaces it (windowed solve with boundary priors)
+  const bool use_pose_prior = prior != nullptr && prior->pose_enabled;
+  if (!use_pose_prior)
+    config.SetConstantRigFromWorldPose(1);
 
   colmap::BundleAdjustmentOptions ba_options;
   ba_options.refine_focal_length = false;
@@ -562,6 +585,8 @@ BackendSummary BackendSystem::solve_and_export(
   if (imu != nullptr)
     inject_imu_factors(*adjuster, recon, *imu);
   inject_loop_factors(*adjuster, recon, frame_timestamps);
+  if (prior != nullptr)
+    inject_boundary_priors(*adjuster, recon, imu, *prior);
   auto ba_summary = adjuster->Solve();
   summary.solved = ba_summary->IsSolutionUsable();
   if (opts_.print_summary) {
@@ -605,6 +630,8 @@ BackendSummary BackendSystem::solve_and_export(
       if (imu != nullptr)
         inject_imu_factors(*adjuster, recon, *imu);
       inject_loop_factors(*adjuster, recon, frame_timestamps);
+      if (prior != nullptr)
+        inject_boundary_priors(*adjuster, recon, imu, *prior);
       ba_summary = adjuster->Solve();
       summary.solved = ba_summary->IsSolutionUsable();
       if (opts_.print_summary) {
@@ -714,22 +741,88 @@ void BackendSystem::online_worker() {
     auto imu = build_imu_constraints(used_keyframes, imu_slice, t_cam_to_imu_,
                                      imu_noises_, gravity_(2),
                                      opts_.use_imu_factors);
+
+    // boundary priors on the oldest used keyframe (frame id 1). The pose
+    // prior replaces the constant gauge anchor; the center is the keyframe's
+    // current value, i.e. the previous solve's refined pose/biases once warm
+    // starting has run — the gauge follows the backend map, not the filter
+    // snapshot, so loop closures can move the window seam.
+    BoundaryPrior prior;
+    if (!used_keyframes.empty()) {
+      const Keyframe &oldest = used_keyframes.front();
+      if (opts_.window_prior_sigma_pos > 0 &&
+          opts_.window_prior_sigma_ori > 0) {
+        prior.pose_enabled = true;
+        prior.R_GtoI = oldest.R_GtoI.cast<double>();
+        prior.p_IinG = oldest.p_IinG.cast<double>();
+        prior.sigma_ori = opts_.window_prior_sigma_ori;
+        prior.sigma_pos = opts_.window_prior_sigma_pos;
+      }
+      if (imu != nullptr && opts_.window_prior_sigma_vel > 0 &&
+          opts_.window_prior_sigma_bg > 0 && opts_.window_prior_sigma_ba > 0) {
+        prior.sb_enabled = true;
+        prior.sb << oldest.v_IinG.cast<double>(), oldest.bg.cast<double>(),
+            oldest.ba.cast<double>();
+        prior.sigma_vel = opts_.window_prior_sigma_vel;
+        prior.sigma_bg = opts_.window_prior_sigma_bg;
+        prior.sigma_ba = opts_.window_prior_sigma_ba;
+      }
+    }
     BackendSummary summary = solve_and_export(
         *recon, frame_timestamps, "", imu.get(), opts_.window_max_iterations,
-        opts_.window_max_solver_time, false);
+        opts_.window_max_solver_time, false, &prior);
 
-    // publish the refined poses (keyed by keyframe timestamp)
     if (summary.solved) {
-      std::lock_guard<std::mutex> rlk(results_mtx_);
+      // collect the refined poses (and velocity/bias blocks) once
+      std::vector<std::pair<Mat3, Vec3>> refined(frame_timestamps.size());
+      std::vector<char> refined_valid(frame_timestamps.size(), 0);
       for (size_t i = 0; i < frame_timestamps.size(); i++) {
         const colmap::frame_t frame_id = i + 1;
         if (!recon->ExistsFrame(frame_id))
           continue;
-        Mat3 R_GtoI;
-        Vec3 p_IinG;
         colmap_adapter::rig_from_world_to_clone(
-            recon->Frame(frame_id).RigFromWorld(), R_GtoI, p_IinG);
-        refined_poses_[frame_timestamps[i]] = {R_GtoI, p_IinG};
+            recon->Frame(frame_id).RigFromWorld(), refined[i].first,
+            refined[i].second);
+        refined_valid[i] = 1;
+      }
+
+      // publish the refined poses (keyed by keyframe timestamp)
+      {
+        std::lock_guard<std::mutex> rlk(results_mtx_);
+        for (size_t i = 0; i < frame_timestamps.size(); i++) {
+          if (refined_valid[i])
+            refined_poses_[frame_timestamps[i]] = refined[i];
+        }
+      }
+
+      // warm start: write the refined values back into the recorded
+      // keyframes so the next solve starts from this solution on the overlap
+      // (reverse two-pointer walk; keyframes_ only grows by appending)
+      if (opts_.window_warm_start) {
+        std::lock_guard<std::mutex> lk2(record_mtx_);
+        size_t kidx = keyframes_.size();
+        for (size_t i = frame_timestamps.size(); i-- > 0;) {
+          if (!refined_valid[i])
+            continue;
+          while (kidx > 0 &&
+                 keyframes_[kidx - 1].timestamp > frame_timestamps[i] + 1e-9)
+            kidx--;
+          if (kidx == 0 ||
+              std::abs(keyframes_[kidx - 1].timestamp - frame_timestamps[i]) >
+                  1e-9)
+            continue; // keyframe was dropped; should not happen
+          Keyframe &kf = keyframes_[kidx - 1];
+          kf.R_GtoI = refined[i].first;
+          kf.p_IinG = refined[i].second;
+          if (imu != nullptr && i < imu->sb.size()) {
+            kf.v_IinG = Eigen::Map<const Eigen::Vector3d>(imu->sb[i].data())
+                            .cast<DataType>();
+            kf.bg = Eigen::Map<const Eigen::Vector3d>(imu->sb[i].data() + 3)
+                        .cast<DataType>();
+            kf.ba = Eigen::Map<const Eigen::Vector3d>(imu->sb[i].data() + 6)
+                        .cast<DataType>();
+          }
+        }
       }
     }
     const double solve_ms =

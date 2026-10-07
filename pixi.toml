@@ -8,6 +8,8 @@ version = "0.1.0"
 [tasks]
 configure = "cmake -B build -GNinja -DCMAKE_PREFIX_PATH=$CONDA_PREFIX -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_COLOR_DIAGNOSTICS=ON -DENABLE_ARUCO_TAGS=OFF"
 build = "cmake --build build -j"
+test-python-api = { cmd = "python pysqrtvins/examples/smoke_test.py", depends-on = ["build"] }
+xfeat-demo = { cmd = "python pysqrtvins/examples/xfeat_frontend_example.py --demo", depends-on = ["build"] }
 
 [dependencies]
 opencv = ">=4.13.0,<5"
@@ -19,6 +21,7 @@ ccache = ">=4.12.2,<5"
 yaml-cpp = ">=0.8.0,<0.9"
 python = ">=3.14.3,<3.15"
 pybind11 = ">=3.0.3,<4"
+numpy = ">=2.4.2,<3"
 pandas = ">=3.0.2,<4"
 matplotlib = ">=3.10.8,<4"
 scipy = ">=1.17.1,<2"

@@ -128,72 +128,137 @@ public:
     assert(size_x > 0);
     assert(size_y > 0);
 
-    // Parallelize our 2d grid extraction!!
-    std::vector<std::vector<cv::KeyPoint>> collection(valid_locs.size());
-    parallel_for_(
-        cv::Range(0, (int)valid_locs.size()),
-        LambdaBody([&](const cv::Range &range) {
-          for (int r = range.start; r < range.end; r++) {
+    // Fast path: backends whose detector is expensive to invoke per cell
+    // (e.g. learned detectors wrapped through the Python bindings) can detect
+    // on the whole image in a single call; we then distribute the returned
+    // keypoints over the grid cells ourselves.
+    std::vector<vision::Keypoint> whole_pts;
+    if (detector.detectWholeImage(img, mask, threshold, nonmaxSuppression,
+                                  whole_pts)) {
 
-            // Calculate what cell xy value we are in
-            auto grid = valid_locs.at(r);
-            int x = grid.first * size_x;
-            int y = grid.second * size_y;
+      // Bucket the detections into their grid cells
+      std::vector<std::vector<vision::Keypoint>> cell_pts(grid_x * grid_y);
+      for (const auto &kp : whole_pts) {
+        int gx = (int)(kp.x / (float)size_x);
+        int gy = (int)(kp.y / (float)size_y);
+        if (gx < 0 || gx >= grid_x || gy < 0 || gy >= grid_y)
+          continue;
+        cell_pts.at(gy * grid_x + gx).push_back(kp);
+      }
 
-            // Skip if we are out of bounds
-            if (x + size_x > img.width || y + size_y > img.height)
-              continue;
+      // Keep the best num_features_grid detections of each requested cell
+      for (const auto &grid : valid_locs) {
 
-            // Calculate where we should be extracting from
-            vision::Image cell = img;
-            cell.data = img.data + (size_t)y * img.stride + (size_t)x;
-            cell.width = size_x;
-            cell.height = size_y;
+        // Skip if we are out of bounds (same check as the per-cell path)
+        int x = grid.first * size_x;
+        int y = grid.second * size_y;
+        if (x + size_x > img.width || y + size_y > img.height)
+          continue;
 
-            // Extract features for this part of the image
-            std::vector<vision::Keypoint> pts_new =
-                detector.detect(cell, vision::Image(), threshold,
-                                nonmaxSuppression);
+        // Now lets get the top number from this cell
+        auto &pts_new = cell_pts.at(grid.second * grid_x + grid.first);
+        std::sort(pts_new.begin(), pts_new.end(),
+                  [](const vision::Keypoint &first,
+                     const vision::Keypoint &second) {
+                    return first.response > second.response;
+                  });
 
-            // Now lets get the top number from this
-            std::sort(pts_new.begin(), pts_new.end(),
-                      [](const vision::Keypoint &first,
-                         const vision::Keypoint &second) {
-                        return first.response > second.response;
-                      });
+        // Append the "best" ones to our vector (coordinates are already in
+        // the full image frame since we detected on the whole image)
+        for (size_t i = 0;
+             i < (size_t)num_features_grid && i < pts_new.size(); i++) {
 
-            // Append the "best" ones to our vector
-            // Note that we need to "correct" the point u,v since we extracted
-            // it in a ROI So we should append the location of that ROI in the
-            // image
-            for (size_t i = 0;
-                 i < (size_t)num_features_grid && i < pts_new.size(); i++) {
+          // Create keypoint
+          cv::KeyPoint pt_cor;
+          pt_cor.pt.x = pts_new.at(i).x;
+          pt_cor.pt.y = pts_new.at(i).y;
+          pt_cor.response = pts_new.at(i).response;
+          pt_cor.size = pts_new.at(i).size;
+          pt_cor.octave = pts_new.at(i).octave;
 
-              // Create keypoint
-              cv::KeyPoint pt_cor;
-              pt_cor.pt.x = pts_new.at(i).x + (float)x;
-              pt_cor.pt.y = pts_new.at(i).y + (float)y;
-              pt_cor.response = pts_new.at(i).response;
-              pt_cor.size = pts_new.at(i).size;
-              pt_cor.octave = pts_new.at(i).octave;
+          // Reject if out of bounds (shouldn't be possible...)
+          if ((int)pt_cor.pt.x < 0 || (int)pt_cor.pt.x > img.width ||
+              (int)pt_cor.pt.y < 0 || (int)pt_cor.pt.y > img.height)
+            continue;
 
-              // Reject if out of bounds (shouldn't be possible...)
-              if ((int)pt_cor.pt.x < 0 || (int)pt_cor.pt.x > img.width ||
-                  (int)pt_cor.pt.y < 0 || (int)pt_cor.pt.y > img.height)
+          // Check if it is in the mask region
+          // NOTE: mask has max value of 255 (white) if it should be removed
+          if (mask.at<uint8_t>((int)pt_cor.pt.y, (int)pt_cor.pt.x) > 127)
+            continue;
+          pts.push_back(pt_cor);
+        }
+      }
+    } else {
+
+      // Parallelize our 2d grid extraction!!
+      std::vector<std::vector<cv::KeyPoint>> collection(valid_locs.size());
+      parallel_for_(
+          cv::Range(0, (int)valid_locs.size()),
+          LambdaBody([&](const cv::Range &range) {
+            for (int r = range.start; r < range.end; r++) {
+
+              // Calculate what cell xy value we are in
+              auto grid = valid_locs.at(r);
+              int x = grid.first * size_x;
+              int y = grid.second * size_y;
+
+              // Skip if we are out of bounds
+              if (x + size_x > img.width || y + size_y > img.height)
                 continue;
 
-              // Check if it is in the mask region
-              // NOTE: mask has max value of 255 (white) if it should be removed
-              if (mask.at<uint8_t>((int)pt_cor.pt.y, (int)pt_cor.pt.x) > 127)
-                continue;
-              collection.at(r).push_back(pt_cor);
+              // Calculate where we should be extracting from
+              vision::Image cell = img;
+              cell.data = img.data + (size_t)y * img.stride + (size_t)x;
+              cell.width = size_x;
+              cell.height = size_y;
+
+              // Extract features for this part of the image
+              std::vector<vision::Keypoint> pts_new =
+                  detector.detect(cell, vision::Image(), threshold,
+                                  nonmaxSuppression);
+
+              // Now lets get the top number from this
+              std::sort(pts_new.begin(), pts_new.end(),
+                        [](const vision::Keypoint &first,
+                           const vision::Keypoint &second) {
+                          return first.response > second.response;
+                        });
+
+              // Append the "best" ones to our vector
+              // Note that we need to "correct" the point u,v since we
+              // extracted it in a ROI So we should append the location of that
+              // ROI in the image
+              for (size_t i = 0;
+                   i < (size_t)num_features_grid && i < pts_new.size(); i++) {
+
+                // Create keypoint
+                cv::KeyPoint pt_cor;
+                pt_cor.pt.x = pts_new.at(i).x + (float)x;
+                pt_cor.pt.y = pts_new.at(i).y + (float)y;
+                pt_cor.response = pts_new.at(i).response;
+                pt_cor.size = pts_new.at(i).size;
+                pt_cor.octave = pts_new.at(i).octave;
+
+                // Reject if out of bounds (shouldn't be possible...)
+                if ((int)pt_cor.pt.x < 0 || (int)pt_cor.pt.x > img.width ||
+                    (int)pt_cor.pt.y < 0 || (int)pt_cor.pt.y > img.height)
+                  continue;
+
+                // Check if it is in the mask region
+                // NOTE: mask has max value of 255 (white) if it should be
+                // removed
+                if (mask.at<uint8_t>((int)pt_cor.pt.y, (int)pt_cor.pt.x) >
+                    127)
+                  continue;
+                collection.at(r).push_back(pt_cor);
+              }
             }
-          }
-        }));
+          }));
 
-    // Combine all the collections into our single vector
-    for (size_t r = 0; r < collection.size(); r++) {
-      pts.insert(pts.end(), collection.at(r).begin(), collection.at(r).end());
+      // Combine all the collections into our single vector
+      for (size_t r = 0; r < collection.size(); r++) {
+        pts.insert(pts.end(), collection.at(r).begin(), collection.at(r).end());
+      }
     }
 
     // Return if no points

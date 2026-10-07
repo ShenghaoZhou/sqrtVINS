@@ -32,7 +32,9 @@
 
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 
@@ -46,6 +48,10 @@
 #include "utils/sensor_data.h"
 
 namespace ov_core {
+
+namespace vision {
+class CVBackend;
+}
 
 class Feature;
 class CamBase;
@@ -148,6 +154,20 @@ public:
    * @return FeatureDatabase pointer that one can query for features
    */
   std::shared_ptr<FeatureDatabase> get_feature_database() { return database; }
+
+  /**
+   * @brief Replace the CV backend used for the core vision operations.
+   *
+   * Only trackers built on the vision::CVBackend abstraction (e.g. TrackKLT)
+   * support this; the base implementation throws. This allows swapping in a
+   * custom backend (e.g. one dispatching to Python) after construction, e.g.
+   * when the tracker is created deep inside an estimator pipeline.
+   */
+  virtual void set_cv_backend(std::shared_ptr<vision::CVBackend> backend) {
+    (void)backend;
+    throw std::runtime_error(
+        "set_cv_backend: this tracker does not support pluggable CV backends");
+  }
 
   /**
    * @brief Changes the ID of an actively tracked feature to another one.

@@ -28,6 +28,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include "VinsOptions.h"
@@ -65,6 +66,17 @@ public:
 
   std::shared_ptr<ov_core::TrackBase> get_trackFEATS() { return trackFEATS; }
   std::shared_ptr<ov_core::TrackBase> get_trackARUCO() { return trackARUCO; }
+
+  /**
+   * @brief Replace the CV backend of the feature tracker.
+   *
+   * Forwards to TrackBase::set_cv_backend, which only KLT-style trackers
+   * support. Call before the first feed_camera, e.g. to inject a backend
+   * dispatching to Python (see the pysqrtvins bindings).
+   */
+  void set_cv_backend(std::shared_ptr<ov_core::vision::CVBackend> backend) {
+    trackFEATS->set_cv_backend(std::move(backend));
+  }
 
   cv::Mat get_historical_viz_image(const std::shared_ptr<State> &state,
                                    bool did_zupt, bool is_init);

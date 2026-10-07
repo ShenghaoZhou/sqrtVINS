@@ -94,6 +94,28 @@ public:
   virtual bool refineSubpix(const Image &src, std::vector<cv::Point2f> &pts,
                             int win_size = 5, int max_iters = 20,
                             double eps = 0.001) = 0;
+
+  /// Optional whole-image detection on the full-resolution image. Backends
+  /// whose detector is expensive to invoke (e.g. learned detectors wrapped
+  /// through the Python bindings) can implement this so the grider calls the
+  /// detector once per frame on the full image and distributes the returned
+  /// keypoints over the grid cells itself, instead of invoking detect() once
+  /// per cell. @param src full-resolution grayscale image
+  /// @param mask mask with the same size as src; values > 127 mark regions
+  ///        where no features should be returned (always valid here)
+  /// @return true if this operation is implemented and `out` was filled with
+  ///         keypoints in level-0 coordinates; false to fall back to the
+  ///         default per-cell detect() calls
+  virtual bool detectWholeImage(const Image &src, const cv::Mat &mask,
+                                int threshold, bool nonmax_suppression,
+                                std::vector<Keypoint> &out) {
+    (void)src;
+    (void)mask;
+    (void)threshold;
+    (void)nonmax_suppression;
+    (void)out;
+    return false;
+  }
 };
 
 /**

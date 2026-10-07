@@ -6,6 +6,7 @@
 
 #include "core/SqrtEstimator.h"
 #include "core/Frontend.h"
+#include "vision/CVBackend.h"
 #include "core/InitRunner.h"
 #include "core/Pipeline.h"
 #include "core/System.h"
@@ -250,7 +251,12 @@ PYBIND11_MODULE(ov_srvins_py, m) {
             self.process_measurements_rules(state, timestamp, sensor_ids, featsup_MSCKF, feats_slam);
             return std::make_tuple(featsup_MSCKF, feats_slam);
         })
-        .def("set_startup_time", &Frontend::set_startup_time);
+        .def("set_startup_time", &Frontend::set_startup_time)
+        .def("set_cv_backend", &Frontend::set_cv_backend, py::arg("backend"),
+             "Replace the feature tracker's CV backend (e.g. with a "
+             "pysqrtvins.vision.Backend dispatching to Python). Import "
+             "pysqrtvins first so the CVBackend type is registered, and "
+             "call before the first feed_camera.");
 
     // Fully wired pipeline bundle (canonical construction sequence)
     py::class_<System>(m, "System")

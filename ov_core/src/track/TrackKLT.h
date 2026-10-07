@@ -87,6 +87,15 @@ public:
    */
   void feed_new_camera(const CameraData &message) override;
 
+  /**
+   * @brief Replace the CV backend (e.g. with one dispatching to Python).
+   * Should be called before the first image is fed.
+   */
+  void set_cv_backend(std::shared_ptr<vision::CVBackend> cvbackend) override {
+    if (cvbackend)
+      backend = std::move(cvbackend);
+  }
+
 protected:
   /**
    * @brief Process a new monocular image

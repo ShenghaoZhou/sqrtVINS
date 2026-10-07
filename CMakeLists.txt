@@ -32,3 +32,10 @@ add_subdirectory(ov_core)
 add_subdirectory(ov_init)
 add_subdirectory(ov_msckf)
 add_subdirectory(ov_srvins)
+
+# Python bindings for the visual frontend (extension point for custom
+# Python-implemented detectors/matchers, e.g. XFeat)
+option(SQRTVINS_ENABLE_PYTHON "Build the pysqrtvins python bindings" ON)
+if(SQRTVINS_ENABLE_PYTHON)
+    add_subdirectory(pysqrtvins)
+endif()
